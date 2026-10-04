@@ -116,7 +116,7 @@ td{font-size:14px;padding:12px 11px;white-space:nowrap}
 }
 @media(max-width:1200px){.nav{overflow:visible!important;flex-wrap:wrap!important}.header-inner{align-items:center}.header-tools{margin-left:auto}.refresh-note{white-space:normal;line-height:1.15;text-align:right;max-width:210px}}
 /* Traffic KPI cards: keep labels readable and values on a clean second line */
-#summaryTraffic,#trafficKpis{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+#summaryTraffic,#trafficKpis{grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
 #summaryTraffic .kpi,#trafficKpis .kpi{min-width:0;min-height:112px;padding:14px 13px;justify-content:center}
 #summaryTraffic .kpi-label,#trafficKpis .kpi-label{font-size:13px;line-height:1.2;min-height:32px;display:flex;align-items:flex-start}
 #summaryTraffic .kpi-value,#trafficKpis .kpi-value{font-size:24px;line-height:1.05;white-space:nowrap;overflow:visible}
@@ -141,7 +141,9 @@ td{font-size:14px;padding:12px 11px;white-space:nowrap}
 .growth-value.neg{top:calc(50% + 4px)}
 @media(max-width:1200px){.traffic-growth-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.traffic-growth-kpis{grid-template-columns:1fr}.growth-chart{height:170px}}
-.growth-values-strip{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:8px;padding:4px 10px 0;align-items:center}.growth-values-strip span{text-align:center;font-size:11px;font-weight:900;white-space:nowrap}.growth-values-strip span.positive{color:#16804f}.growth-values-strip span.negative{color:#b74d56}.growth-values-strip span.neutral{color:#777}.table-wrap{overflow-x:auto}.table-wrap table{min-width:760px}@media(max-width:700px){.growth-values-strip{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:8px}.growth-values-strip span{font-size:10px}}</style><style id="mobile-beautify-v2">
+.growth-values-strip{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:8px;padding:4px 10px 0;align-items:center}.growth-values-strip span{text-align:center;font-size:11px;font-weight:900;white-space:nowrap}.growth-values-strip span.positive{color:#16804f}.growth-values-strip span.negative{color:#b74d56}.growth-values-strip span.neutral{color:#777}.table-wrap{overflow-x:auto}.table-wrap table{min-width:760px}@media(max-width:700px){.growth-values-strip{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:8px}.growth-values-strip span{font-size:10px}}
+.month-growth-strip{grid-template-columns:repeat(12,minmax(0,1fr));gap:8px;padding:2px 10px 0}.month-growth-cell{display:flex!important;flex-direction:column;align-items:center;justify-content:flex-start;gap:3px}.month-growth-cell b{font-size:11px;color:var(--muted);font-weight:800}.month-growth-cell strong{font-size:11px;font-weight:900}.month-growth-cell strong.positive{color:var(--green)}.month-growth-cell strong.negative{color:var(--red)}.month-growth-cell strong.neutral{color:#777}@media(max-width:700px){.month-growth-strip{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:8px}}
+</style><style id="mobile-beautify-v2">
 /* Premium responsive navigation + mobile dashboard */
 html,body{max-width:100%;overflow-x:hidden}
 .header{backdrop-filter:blur(10px);background:rgba(255,255,255,.96)}
@@ -769,7 +771,7 @@ function renderTraffic(){
  $('trafficLabels').innerHTML=chartMs.map(m=>`<span>${f.month==='all'?m.slice(0,3):m}</span>`).join('');
  // One YoY growth label per month, placed in a compact strip directly below the bars. No duplicate month labels/growth chart.
  const yoyVals=prevYear?chartMs.map((m,i)=>growth(prevArr[i],curArr[i])):chartMs.map(()=>null);
- $('trafficMomChart').innerHTML=`<div class="growth-values-strip">${yoyVals.map(v=>`<span class="${cls(v)}">${signPct(v)}</span>`).join('')}</div>`;
+ $('trafficMomChart').innerHTML=`<div class="growth-values-strip month-growth-strip">${chartMs.map((m,i)=>`<span class="month-growth-cell"><b>${f.month==='all'?m.slice(0,3):m}</b><strong class="${cls(yoyVals[i])}">${signPct(yoyVals[i])}</strong></span>`).join('')}</div>`;
  $('trafficMomLabels').innerHTML='';
  $('momStrip').innerHTML='';
  // Hide the standalone growth-chart heading when there is no previous year.
@@ -979,9 +981,13 @@ function renderProjection(){
   const totalLeadGrowth=growth(totalL,totalAchL), totalAppGrowth=growth(totalA,totalAchA);
   $('targetVsAchieved').querySelector('tbody').innerHTML=rows+`<tr class="leads-total"><td>Total (Till 30 July)</td><td>${fmt(totalL)}</td><td>${fmt(totalA)}</td><td>${pct(totalL?totalA/totalL*100:0)}</td><td>${fmt(totalAchL)}</td><td>${fmt(totalAchA)}</td><td>${pct(totalAchL?totalAchA/totalAchL*100:0)}</td><td>${signPct(totalLeadGrowth)}</td><td>${signPct(totalAppGrowth)}</td></tr>`;
 
-  // Live Target vs Achieved traffic. Use annual Summary values when available; otherwise use monthly sums.
-  const actual=TRAFFIC_ANNUAL['2026-27']||{};
-  const achievedOrg=Number(actual.organic||0), achievedDir=Number(actual.direct||0), achievedAI=Number(actual.ai||0), achievedAll=Number(actual.all||0);
+  // Live Target vs Achieved traffic uses the actual Aug–Jul monthly channel totals,
+  // matching the original dashboard's Target vs Achieved view. Annual Summary values
+  // remain reserved for the Year-on-Year/Website Traffic by Year comparison.
+  const actualMonths=months;
+  const achievedOrg=actualMonths.reduce((a,m)=>a+trafficVal('organic','2026-27',m),0);
+  const achievedDir=actualMonths.reduce((a,m)=>a+trafficVal('direct','2026-27',m),0);
+  const achievedAI=actualMonths.reduce((a,m)=>a+trafficVal('ai','2026-27',m),0);
   const achievedCombined=achievedOrg+achievedDir+achievedAI;
   const trafficRows=[
     ['Organic Traffic',orgTarget,achievedOrg],['Direct Traffic',dirTarget,achievedDir],['AI Assistant',aiTarget,achievedAI],['Organic+Direct+AI Assistant',combinedTarget,achievedCombined]
@@ -1046,14 +1052,22 @@ document.querySelectorAll('#nav button').forEach(b=>b.addEventListener('click',(
 const GOOGLE_SHEET_ID='1F22D531H6UZL5xcBLANuxQcCcbVNL4-v';
 const PUBLISHED_SHEET_URL='https://docs.google.com/spreadsheets/d/e/2PACX-1vQhJMiBd6rNnn-E2wygec4EBH3x9zKo_31z4BcO6_nkm_WsnXxMMJg1YVdkI5JsVQ/pubhtml';
 const LIVE_SHEETS=['Summary','Jaipuria - All Traffic','Jaipuria - Organic Traffic','Jaipuria - Direct Traffic','Leads - 2026-27','Leads 2025-26','Leads 2024-25','Organic Traffic by States','Organic Traffic by Cities','Direct Traffic by States','Direct Traffic by Cities'];
+const BASE_DATA=JSON.parse(JSON.stringify(DATA));
+const BASE_TRAFFIC_ANNUAL=JSON.parse(JSON.stringify(TRAFFIC_ANNUAL));
+const BASE_GEO_TRAFFIC_CHANNELS=JSON.parse(JSON.stringify(GEO_TRAFFIC_CHANNELS));
 function cleanLive(v){return String(v??'').replace(/\u00a0/g,' ').trim()}
 function numLive(v){if(typeof v==='number')return Number.isFinite(v)?v:0;const n=parseFloat(String(v??'').replace(/[,₹%\s]/g,''));return Number.isFinite(n)?n:0}
 function parseDateLive(v){
-  if(v instanceof Date&&!isNaN(v))return v;
-  const s=cleanLive(v); if(!s)return null;
-  let d=new Date(s); if(!isNaN(d))return d;
-  let m=s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
-  if(m){d=new Date(Number(m[3]),Number(m[1])-1,Number(m[2]),Number(m[4]||0),Number(m[5]||0),Number(m[6]||0));if(!isNaN(d))return d;}
+  if(v instanceof Date&&!isNaN(v.getTime())) return v;
+  if(typeof v==='number' && Number.isFinite(v)){
+    // Google/SheetJS may expose an Excel-style serial date.
+    const d=new Date(Date.UTC(1899,11,30)+v*86400000);
+    if(!isNaN(d.getTime())) return d;
+  }
+  const s=cleanLive(v).replace(/^['"]|['"]$/g,''); if(!s) return null;
+  let d=new Date(s); if(!isNaN(d.getTime())) return d;
+  const m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if(m){d=new Date(Number(m[3]),Number(m[1])-1,Number(m[2]),Number(m[4]||0),Number(m[5]||0),Number(m[6]||0));if(!isNaN(d.getTime()))return d;}
   return null;
 }
 async function fetchSheetCsv(sheetName){
@@ -1133,13 +1147,33 @@ function parseAnnualTraffic(book,monthly){
   }
   return annual;
 }
+function normHeaderLive(v){return cleanLive(v).replace(/^\uFEFF/,'').toLowerCase().replace(/[^a-z0-9]+/g,'');}
+function findHeaderIndexLive(headers, aliases){
+  const wanted=(aliases||[]).map(normHeaderLive);
+  for(let i=0;i<headers.length;i++){const h=normHeaderLive(headers[i]);if(wanted.includes(h))return i;}
+  return -1;
+}
 function parseLeadRecords(book){
   const out={};
   for(const ay of DATA.years){
     const sheet={'2024-25':'Leads 2024-25','2025-26':'Leads 2025-26','2026-27':'Leads - 2026-27'}[ay];
-    const rows=rowObjects(book,sheet);out[ay]=rows.map(r=>{const d=parseDateLive(r['Created On']),txd=parseDateLive(r['Transaction Date']);return {m:d?d.toLocaleString('en-US',{month:'long'}):'',t:txd?txd.toLocaleString('en-US',{month:'long'}):'',tx:txd?txd.toISOString():'',src:cleanLive(r['Lead Source'])||'Unknown',owner:cleanLive(r['Owner'])||'Unknown',sub:cleanLive(r['LeadSubstage'])||'Blank',counter:cleanLive(r['Counter'])||'Unassigned',state:cleanLive(r['Correspondence State'])||'Unknown',city:cleanLive(r['Correspondence City'])||'Unknown',stage:cleanLive(r['Lead Stage'])||'Unknown'};});
+    const rows=rowsFromSheet(book,sheet); const headers=rows[0]||[];
+    const ci={created:findHeaderIndexLive(headers,['Created On','CreatedOn']),transaction:findHeaderIndexLive(headers,['Transaction Date','TransactionDate']),src:findHeaderIndexLive(headers,['Lead Source','LeadSource']),owner:findHeaderIndexLive(headers,['Owner','Owner Name']),sub:findHeaderIndexLive(headers,['LeadSubstage','Lead Substage']),counter:findHeaderIndexLive(headers,['Counter']),state:findHeaderIndexLive(headers,['Correspondence State','State']),city:findHeaderIndexLive(headers,['Correspondence City','City']),stage:findHeaderIndexLive(headers,['Lead Stage','Stage'])};
+    out[ay]=rows.slice(1).map(r=>{
+      const d=parseDateLive(ci.created>=0?r[ci.created]:''), txd=parseDateLive(ci.transaction>=0?r[ci.transaction]:'');
+      return {m:d?d.toLocaleString('en-US',{month:'long'}):'',t:txd?txd.toLocaleString('en-US',{month:'long'}):'',tx:txd?txd.toISOString():'',src:cleanLive(ci.src>=0?r[ci.src]:'')||'Unknown',owner:cleanLive(ci.owner>=0?r[ci.owner]:'')||'Unknown',sub:cleanLive(ci.sub>=0?r[ci.sub]:'')||'Blank',counter:cleanLive(ci.counter>=0?r[ci.counter]:'')||'Unassigned',state:cleanLive(ci.state>=0?r[ci.state]:'')||'Unknown',city:cleanLive(ci.city>=0?r[ci.city]:'')||'Unknown',stage:cleanLive(ci.stage>=0?r[ci.stage]:'')||'Unknown'};
+    }).filter(r=>r.m||r.t||r.src!=='Unknown');
   }
   return out;
+}
+function validateLiveRecords(records){
+  for(const ay of DATA.years){
+    const rows=records[ay]||[], base=BASE_DATA.records[ay]||[];
+    if(rows.length < Math.max(1, Math.floor(base.length*0.75))) return false;
+    const dated=rows.filter(r=>r.m).length;
+    if(dated < Math.max(1, Math.floor(rows.length*0.75))) return false;
+  }
+  return true;
 }
 function parseGeo(book){
   const out={states:{organic:{},direct:{}},cities:{organic:{},direct:{}}};
@@ -1147,31 +1181,57 @@ function parseGeo(book){
   for(const [sheet,type,ch] of specs){const rows=rowsFromSheet(book,sheet);if(!rows.length)continue;for(const [ay,start] of [['2026-27',0],['2025-26',10],['2024-25',20]]){out[type][ch][ay]={};for(let r=2;r<rows.length;r++){const name=cleanLive(rows[r]?.[start]);if(!name||normText(name)==='total')continue;const v=numLive(rows[r]?.[start+1]);if(!Number.isFinite(v))continue;const existing=Object.keys(out[type][ch][ay]).find(k=>normText(k)===normText(name));out[type][ch][ay][existing||name]=(out[type][ch][ay][existing||name]||0)+v;}}}
   return out;
 }
+function validateLiveTraffic(monthly,metrics){
+  for(const ay of DATA.years){
+    const populated=months.filter(m=>Number(monthly?.[ay]?.[m]?.all||0)>0).length;
+    const required=ay==='2026-27'?1:8;
+    if(populated<required)return false;
+    for(const ch of ['organic','direct']){
+      const mc=months.filter(m=>Number(metrics?.[ay]?.[ch]?.[m]?.sessions||0)>0).length;
+      if(mc<required)return false;
+    }
+  }
+  return true;
+}
+function validateLiveGeo(geo){
+  for(const type of ['states','cities']) for(const ch of ['organic','direct']) for(const ay of DATA.years){
+    const n=Object.keys(geo?.[type]?.[ch]?.[ay]||{}).length;
+    const required=type==='states'?(ay==='2026-27'?5:15):(ay==='2026-27'?10:25);
+    if(n<required)return false;
+  }
+  return true;
+}
 async function applyLiveBook(book){
   const monthly=parseTrafficMonthly(book);
   const metrics=parseTrafficMetrics(book);
   const records=parseLeadRecords(book);
   const annual=parseAnnualTraffic(book,monthly);
   const geo=parseGeo(book);
-  // Only commit after all sheets have parsed successfully.
-  DATA.records=records;
-  DATA.traffic=monthly;
-  DATA.metrics=metrics;
-  TRAFFIC_ANNUAL=annual;
-  GEO_TRAFFIC_CHANNELS=geo;
-  // Target values preserved from the correct Targets 26–27 view; these are intentionally not derived from the incomplete monthly actuals.
+  const liveTrafficOk=validateLiveTraffic(monthly,metrics);
+  const liveRecordsOk=validateLiveRecords(records);
+  const liveGeoOk=validateLiveGeo(geo);
+  // Apply only structurally valid live datasets. This prevents one malformed Google CSV response
+  // from wiping the working dashboard with zeros/blank tables.
+  DATA.records=liveRecordsOk?records:JSON.parse(JSON.stringify(BASE_DATA.records));
+  DATA.traffic=liveTrafficOk?monthly:JSON.parse(JSON.stringify(BASE_DATA.traffic));
+  DATA.metrics=liveTrafficOk?metrics:JSON.parse(JSON.stringify(BASE_DATA.metrics));
+  TRAFFIC_ANNUAL=liveTrafficOk?annual:JSON.parse(JSON.stringify(BASE_TRAFFIC_ANNUAL));
+  GEO_TRAFFIC_CHANNELS=liveGeoOk?geo:JSON.parse(JSON.stringify(BASE_GEO_TRAFFIC_CHANNELS));
+  // Preserve the dashboard's approved 2026-27 target values.
   DATA.projTraffic={baseOrganic:175829,baseDirect:115841,baseAI:685,baseCombined:292355,organic:187400,direct:130000,ai:4400,combined:321800};
   DATA.refreshed=new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});
   $('refreshStamp').textContent=DATA.refreshed;
   updateYearScopedFilters();render();
+  const parts=[]; if(!liveRecordsOk)parts.push('lead data fallback'); if(!liveTrafficOk)parts.push('traffic fallback'); if(!liveGeoOk)parts.push('geo fallback');
+  return parts;
 }
 async function loadLiveDashboard(){
   const btn=$('refreshBtn');
   if(btn){btn.disabled=true;btn.textContent='↻ Loading…';}
   try{
     const book=await fetchLiveBook();
-    await applyLiveBook(book);
-    setStatus('✓ Dashboard updated from Google Sheet.','ok');
+    const fallbackParts=await applyLiveBook(book);
+    setStatus(fallbackParts.length?`✓ Google Sheet loaded. Preserved valid dashboard data for ${fallbackParts.join(', ')}.`:'✓ Dashboard updated from Google Sheet.','ok');
     if(btn){btn.textContent='✓ Data Refreshed';setTimeout(()=>{btn.textContent='↻ Refresh Excel';btn.disabled=false},1600)}
   }catch(err){
     console.error('Google Sheet load failed:',err);
