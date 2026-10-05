@@ -1052,16 +1052,60 @@ function parseTrafficMetrics(book){const out={"2024-25":{organic:{},direct:{}},"
 function parseAnnualAndProjection(book,monthly){
   const annual={"2024-25":{all:0,organic:0,direct:0,ai:0},"2025-26":{all:0,organic:0,direct:0,ai:0},"2026-27":{all:0,organic:0,direct:0,ai:0}};
   const sh=book.Summary||{headers:[],rows:[]}, rows=sh.rows||[];
-  const projectionMap={}, monthOrder={}; months.forEach((m,i)=>monthOrder[m]=i);
-  for(const row of rows){const label=cleanLive(row?.[0]);if(monthOrder[label]!==undefined)projectionMap[label]={m:label,leads:numLive(row?.[1]),applications:numLive(row?.[2])};}
-  const projection=months.filter(m=>projectionMap[m]).map(m=>projectionMap[m]);
-  if(projection.length!==12)throw new Error(`Summary target rows incomplete: found ${projection.length} of 12 months`);
-  const findTrafficBlock=(left,right)=>{for(let i=0;i<rows.length;i++){const a=cleanLive(rows[i]?.[0]),b=cleanLive(rows[i]?.[1]),c=cleanLive(rows[i]?.[2]);if(a==='Channels'&&new RegExp(left,'i').test(b)&&new RegExp(right,'i').test(c)){const block={};for(let r=i+1;r<Math.min(i+8,rows.length);r++){const l=cleanLive(rows[r]?.[0]).toLowerCase();const key=l==='total traffic'?'all':l==='organic traffic'?'organic':l==='direct traffic'?'direct':l==='ai assistant'?'ai':null;if(key)block[key]=[numLive(rows[r]?.[1]),numLive(rows[r]?.[2])];}return block;}}return null;};
-  const b1=findTrafficBlock('Aug 24.*July 25','Aug 25.*July 26'),b2=findTrafficBlock('Aug 25.*July 26','Aug 26.*July 27');
-  if(!b1||!b2)throw new Error('Summary annual traffic blocks could not be read');
-  for(const key of ['all','organic','direct','ai']){annual['2024-25'][key]=b1[key]?.[0]??0;annual['2025-26'][key]=b1[key]?.[1]??0;annual['2026-27'][key]=b2[key]?.[1]??0;}
+
+  // Summary is a report-style sheet, not a simple table. Google Visualization can
+  // treat the first spreadsheet row as column headers, so never depend on fixed row
+  // numbers or on the literal "Channels" header being present in the parsed rows.
+  // Instead, identify each annual traffic block by its metric rows.
+  const trafficBlocks=[];
+  for(let i=0;i<rows.length;i++){
+    const label=cleanLive(rows[i]?.[0]).toLowerCase();
+    if(label!=='total traffic') continue;
+    const block={};
+    for(let r=i;r<Math.min(i+5,rows.length);r++){
+      const l=cleanLive(rows[r]?.[0]).toLowerCase();
+      const key=l==='total traffic'?'all':l==='organic traffic'?'organic':l==='direct traffic'?'direct':l==='ai assistant'?'ai':l==='organic+direct+ai assistant'?'combined':null;
+      if(key) block[key]=[numLive(rows[r]?.[1]),numLive(rows[r]?.[2])];
+    }
+    if(block.all!==undefined && block.organic!==undefined && block.direct!==undefined && block.ai!==undefined){
+      trafficBlocks.push(block);
+    }
+  }
+  if(trafficBlocks.length<2) throw new Error(`Summary annual traffic blocks could not be read (found ${trafficBlocks.length} complete blocks)`);
+
+  const b1=trafficBlocks[0], b2=trafficBlocks[1];
+  for(const key of ['all','organic','direct','ai']){
+    annual['2024-25'][key]=b1[key][0];
+    annual['2025-26'][key]=b1[key][1];
+    annual['2026-27'][key]=b2[key][1];
+  }
+
+  // 2026-27 monthly planning targets are also stored in Summary. Match by month
+  // name and require all 12 months, including August.
+  const projectionMap={};
+  for(const row of rows){
+    const label=cleanLive(row?.[0]);
+    const month=months.find(m=>normText(m)===normText(label));
+    if(month) projectionMap[month]={m:month,leads:numLive(row?.[1]),applications:numLive(row?.[2])};
+  }
+  const projection=months.map(m=>projectionMap[m]).filter(Boolean);
+  if(projection.length!==12){
+    const found=projection.map(x=>x.m).join(', ');
+    throw new Error(`Summary target rows incomplete: found ${projection.length} of 12 months (${found})`);
+  }
+
+  // Approved 2026-27 annual traffic targets. Actual/live values always come from
+  // the Google Sheet; these are planning targets from the original dashboard.
   const prev=annual['2025-26'].organic+annual['2025-26'].direct+annual['2025-26'].ai;
-  const projTraffic={organic:191000,direct:130000,ai:4400,combined:321800,organic_growth:((191000-annual['2025-26'].organic)/annual['2025-26'].organic)*100,direct_growth:((130000-annual['2025-26'].direct)/annual['2025-26'].direct)*100,combined_growth:((321800-prev)/prev)*100};
+  const projTraffic={
+    organic:191000,
+    direct:130000,
+    ai:4400,
+    combined:321800,
+    organic_growth:annual['2025-26'].organic?((191000-annual['2025-26'].organic)/annual['2025-26'].organic)*100:0,
+    direct_growth:annual['2025-26'].direct?((130000-annual['2025-26'].direct)/annual['2025-26'].direct)*100:0,
+    combined_growth:prev?((321800-prev)/prev)*100:0
+  };
   return {annual,projection,projTraffic};
 }
 function parseLeadRecords(book){const out={};const sheets={'2024-25':'Leads 2024-25','2025-26':'Leads 2025-26','2026-27':'Leads - 2026-27'};for(const ay of DATA.years){const sh=book[sheets[ay]];if(!sh){out[ay]=[];continue}const rows=sh.rows||[],h=sh.headers||[];const ci={created:findHeaderIndexLive(h,['Created On','CreatedOn','Created Date','CreatedDate']),transaction:findHeaderIndexLive(h,['Transaction Date','TransactionDate']),src:findHeaderIndexLive(h,['Lead Source','LeadSource','Source']),owner:findHeaderIndexLive(h,['Owner','Owner Name','Lead Owner','LeadOwner']),sub:findHeaderIndexLive(h,['LeadSubstage','Lead Substage','Lead Sub Stage','LeadSub Stage']),counter:findHeaderIndexLive(h,['Counter','Counter Name','CounterName']),state:findHeaderIndexLive(h,['Correspondence State','CorrespondenceState','State']),city:findHeaderIndexLive(h,['Correspondence City','CorrespondenceCity','City']),stage:findHeaderIndexLive(h,['Lead Stage','LeadStage','Stage'])};if(ci.created<0)throw new Error(`${sheets[ay]}: Created On column not found`);out[ay]=rows.map(r=>{const d=parseDateLive(r[ci.created]),txd=ci.transaction>=0?parseDateLive(r[ci.transaction]):null;return {m:d?d.toLocaleString('en-US',{month:'long'}):'',t:txd?txd.toLocaleString('en-US',{month:'long'}):'',tx:txd?txd.toISOString():'',src:cleanLive(r[ci.src])||'Unknown',owner:cleanLive(r[ci.owner])||'Unknown',sub:cleanLive(r[ci.sub])||'Blank',counter:cleanLive(r[ci.counter])||'Unassigned',state:cleanLive(r[ci.state])||'Unknown',city:cleanLive(r[ci.city])||'Unknown',stage:cleanLive(r[ci.stage])||'Unknown'}}).filter(r=>r.m)}return out}
