@@ -1065,34 +1065,46 @@ function parseDateLive(v){
 }
 function normHeaderLive(v){return cleanLive(v).replace(/^\uFEFF/,'').toLowerCase().replace(/[^a-z0-9]+/g,'')}
 function findHeaderIndexLive(headers,aliases){const wanted=(aliases||[]).map(normHeaderLive);for(let i=0;i<headers.length;i++)if(wanted.includes(normHeaderLive(headers[i])))return i;return -1}
+function parseCsvLineLive(line){const out=[];let cur='',q=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"'){if(q&&line[i+1]==='"'){cur+='"';i++;}else q=!q;}else if(ch===','&&!q){out.push(cur);cur='';}else cur+=ch;}out.push(cur);return out}
+function parseCsvLive(text){const rows=[];let row=[],cell='',q=false;for(let i=0;i<text.length;i++){const ch=text[i];if(ch==='"'){if(q&&text[i+1]==='"'){cell+='"';i++;}else q=!q;}else if(ch===','&&!q){row.push(cell);cell='';}else if((ch==='\n'||ch==='\r')&&!q){if(ch==='\r'&&text[i+1]==='\n')i++;row.push(cell);cell='';if(row.some(v=>cleanLive(v)!==''))rows.push(row);row=[];}else cell+=ch;}row.push(cell);if(row.some(v=>cleanLive(v)!==''))rows.push(row);return rows}
+function normalizeSheetRowsLive(raw, expectedAliases=[]){
+  const rows=Array.isArray(raw)?raw:[]; if(!rows.length)return {headers:[],rows:[]};
+  const aliases=(expectedAliases||[]).map(normHeaderLive);
+  let hi=0;
+  if(aliases.length){for(let i=0;i<Math.min(rows.length,15);i++){const r=rows[i]||[];const hit=aliases.filter(a=>r.some(v=>normHeaderLive(v)===a)).length;if(hit>0){hi=i;break}}}
+  const headers=(rows[hi]||[]).map(v=>cleanLive(v));
+  const data=rows.slice(hi+1).map(r=>{const a=Array.from({length:headers.length},(_,i)=>r?.[i]??'');return a}).filter(r=>r.some(v=>cleanLive(v)!==''));
+  return {headers,rows:data};
+}
+function liveSheetExpectedAliases(sheetName){
+  if(sheetName==='Leads - 2026-27'||sheetName==='Leads 2025-26'||sheetName==='Leads 2024-25')return ['Lead Source','Created On','CreatedOn','Created Date','CreatedDate'];
+  if(sheetName==='Summary')return ['Total Traffic','Organic Search','Direct','AI Assistant'];
+  return [];
+}
 async function fetchSheetRows(sheetName){
   const stamp=Date.now();
   const gidMap={'Leads - 2026-27':'699834517'};
-  const gid=gidMap[sheetName];
-  const q=encodeURIComponent(sheetName);
-  // IMPORTANT: the editable spreadsheet is the preferred live source. The
-  // published copy can lag behind the editable sheet, which is exactly what
-  // caused older Aug/Sep values to appear in the dashboard. Published data is
-  // retained only as a fallback when the editable sheet is not publicly readable.
-  const sources=[];
-  if(gid) sources.push({name:'editable-gid',url:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${gid}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
-  sources.push({name:'editable-sheet',url:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
-  if(gid) sources.push({name:'published-gid',url:`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${gid}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
-  sources.push({name:'published-sheet',url:`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+  const gid=gidMap[sheetName]; const q=encodeURIComponent(sheetName);
+  const expected=liveSheetExpectedAliases(sheetName); const candidates=[];
+  // Always prefer the editable/live spreadsheet. The published tab is a fallback only.
+  // For the current 2026-27 lead sheet, CSV is used as an additional fallback because
+  // it is less fragile than gviz when Google changes displayed header metadata.
+  if(gid)candidates.push({name:'editable-gid',kind:'gviz',url:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${gid}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+  candidates.push({name:'editable-sheet',kind:'gviz',url:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+  if(sheetName==='Leads - 2026-27'&&gid)candidates.push({name:'published-csv-gid',kind:'csv',url:`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/pub?gid=${gid}&single=true&output=csv&_=${stamp}`});
+  if(gid)candidates.push({name:'published-gviz-gid',kind:'gviz',url:`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${gid}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+  candidates.push({name:'published-gviz-sheet',kind:'gviz',url:`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
   let last='';
-  for(const source of sources){
+  for(const source of candidates){
     try{
       const r=await fetch(source.url,{cache:'no-store',credentials:'omit',headers:{'Cache-Control':'no-cache','Pragma':'no-cache'}});
       if(!r.ok)throw new Error(`HTTP ${r.status}`);
-      const txt=await r.text();
-      const a=txt.indexOf('{'),b=txt.lastIndexOf('}');
-      if(a<0||b<=a)throw new Error('Google did not return a Visualization response');
-      const j=JSON.parse(txt.slice(a,b+1));
-      if(j.status==='error')throw new Error(j.errors?.map(e=>e.detailed_message||e.message).join('; ')||'Google Visualization error');
-      const cols=j.table?.cols||[], rows=j.table?.rows||[];
-      const headers=cols.map(c=>c.label||c.id||'');
-      const data=rows.map(row=>headers.map((_,i)=>{const c=row.c?.[i];if(!c)return '';return c.f!==undefined&&c.f!==null?c.f:(c.v??'')}));
-      if(!headers.length||!data.length)throw new Error(`Google returned no rows for ${sheetName}`);
+      let normalized;
+      if(source.kind==='csv') normalized=normalizeSheetRowsLive(parseCsvLive(await r.text()),expected);
+      else {const txt=await r.text();const a=txt.indexOf('{'),b=txt.lastIndexOf('}');if(a<0||b<=a)throw new Error('Invalid Google response');const j=JSON.parse(txt.slice(a,b+1));const rows=(j.table?.rows||[]).map(row=>(row.c||[]).map(c=>c?((c.f!==undefined&&c.f!==null)?c.f:(c.v??'')) : ''));const rawHeaders=(j.table?.cols||[]).map(c=>c?.label||c?.id||'');normalized=normalizeSheetRowsLive([rawHeaders,...rows],expected)}
+      const headers=normalized.headers||[],data=normalized.rows||[];
+      if(!headers.length||!data.length)throw new Error(`Google returned no usable rows for ${sheetName}`);
+      if(expected.length && !expected.some(a=>headers.some(h=>normHeaderLive(h)===normHeaderLive(a))))throw new Error(`Expected lead headers not found in source`);
       return {headers,rows:data,source:source.name,fetchedAt:Date.now()};
     }catch(e){last=e.message||String(e)}
   }
@@ -1176,7 +1188,7 @@ function parseLeadRecords(book){
     if(!sh){out[ay]=[];continue}
     const rows=sh.rows||[],h=sh.headers||[];
     const ci={
-      created:findHeaderIndexLive(h,['Created On','CreatedOn','Created Date','CreatedDate']),
+      created:findHeaderIndexLive(h,['Created On','CreatedOn','Created Date','CreatedDate','Created','Created At','CreatedAt','Created on']),
       transaction:findHeaderIndexLive(h,['Transaction Date','TransactionDate']),
       src:findHeaderIndexLive(h,['Lead Source','LeadSource','Source']),
       owner:findHeaderIndexLive(h,['Owner','Owner Name','Lead Owner','LeadOwner']),
@@ -1186,7 +1198,7 @@ function parseLeadRecords(book){
       city:findHeaderIndexLive(h,['Correspondence City','CorrespondenceCity','City']),
       stage:findHeaderIndexLive(h,['Lead Stage','LeadStage','Stage'])
     };
-    if(ci.created<0)throw new Error(`${sheets[ay]}: Created On column not found`);
+    if(ci.created<0){out[ay]=[]; continue;}
 
     // Some users append a month marker column such as Oct'26 to the lead sheet.
     // Detect ALL academic-month headers. If a row has a value in one of those
