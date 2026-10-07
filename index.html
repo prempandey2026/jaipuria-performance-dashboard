@@ -1066,31 +1066,43 @@ function parseDateLive(v){
 function normHeaderLive(v){return cleanLive(v).replace(/^\uFEFF/,'').toLowerCase().replace(/[^a-z0-9]+/g,'')}
 function findHeaderIndexLive(headers,aliases){const wanted=(aliases||[]).map(normHeaderLive);for(let i=0;i<headers.length;i++)if(wanted.includes(normHeaderLive(headers[i])))return i;return -1}
 async function fetchSheetRows(sheetName){
-  const q=encodeURIComponent(sheetName), stamp=Date.now();
-  // Use the published Google Sheet as the primary live source. The Leads - 2026-27
-  // tab has a fixed gid, so Refresh Excel can never accidentally read a similarly
-  // named/wrong sheet. The editable-sheet endpoint remains a fallback.
+  const stamp=Date.now();
   const gidMap={'Leads - 2026-27':'699834517'};
   const gid=gidMap[sheetName];
-  const urls=[];
-  if(gid) urls.push(`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${gid}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`);
-  urls.push(`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`);
-  urls.push(`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`);
+  const q=encodeURIComponent(sheetName);
+  // IMPORTANT: the editable spreadsheet is the preferred live source. The
+  // published copy can lag behind the editable sheet, which is exactly what
+  // caused older Aug/Sep values to appear in the dashboard. Published data is
+  // retained only as a fallback when the editable sheet is not publicly readable.
+  const sources=[];
+  if(gid) sources.push({name:'editable-gid',url:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${gid}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+  sources.push({name:'editable-sheet',url:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+  if(gid) sources.push({name:'published-gid',url:`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${gid}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+  sources.push({name:'published-sheet',url:`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
   let last='';
-  for(const url of urls){
+  for(const source of sources){
     try{
-      const r=await fetch(url,{cache:'no-store',credentials:'omit',headers:{'Cache-Control':'no-cache','Pragma':'no-cache'}});if(!r.ok)throw new Error(`HTTP ${r.status}`);
-      const txt=await r.text();const a=txt.indexOf('{'),b=txt.lastIndexOf('}');if(a<0||b<=a)throw new Error('Google did not return a Visualization response');
-      const j=JSON.parse(txt.slice(a,b+1));if(j.status==='error')throw new Error(j.errors?.map(e=>e.detailed_message||e.message).join('; ')||'Google Visualization error');
-      const cols=j.table?.cols||[], rows=j.table?.rows||[];const headers=cols.map(c=>c.label||c.id||'');
+      const r=await fetch(source.url,{cache:'no-store',credentials:'omit',headers:{'Cache-Control':'no-cache','Pragma':'no-cache'}});
+      if(!r.ok)throw new Error(`HTTP ${r.status}`);
+      const txt=await r.text();
+      const a=txt.indexOf('{'),b=txt.lastIndexOf('}');
+      if(a<0||b<=a)throw new Error('Google did not return a Visualization response');
+      const j=JSON.parse(txt.slice(a,b+1));
+      if(j.status==='error')throw new Error(j.errors?.map(e=>e.detailed_message||e.message).join('; ')||'Google Visualization error');
+      const cols=j.table?.cols||[], rows=j.table?.rows||[];
+      const headers=cols.map(c=>c.label||c.id||'');
       const data=rows.map(row=>headers.map((_,i)=>{const c=row.c?.[i];if(!c)return '';return c.f!==undefined&&c.f!==null?c.f:(c.v??'')}));
-      if(!headers.length || !data.length) throw new Error(`Google returned no rows for ${sheetName}`);
-      return {headers,rows:data};
+      if(!headers.length||!data.length)throw new Error(`Google returned no rows for ${sheetName}`);
+      return {headers,rows:data,source:source.name,fetchedAt:Date.now()};
     }catch(e){last=e.message||String(e)}
   }
-  throw new Error(`Unable to fetch "${sheetName}" from Google Sheet. ${last}`)
+  throw new Error(`Unable to fetch "${sheetName}" from Google Sheet. ${last}`);
 }
-async function fetchLiveBook(){const b={};for(const n of LIVE_SHEETS)b[n]=await fetchSheetRows(n);return b}
+async function fetchLiveBook(){
+  const b={};
+  for(const n of LIVE_SHEETS)b[n]=await fetchSheetRows(n);
+  return b;
+}
 function monthYearFromHeader(h){const m=cleanLive(h).match(/^([A-Za-z]{3})'?\s*(\d{2})$/);if(!m)return null;const mon=new Date(`${m[1]} 1, 20${m[2]}`).toLocaleString('en-US',{month:'long'});const yr=2000+Number(m[2]);const ay=['August','September','October','November','December'].includes(mon)?`${yr}-${String(yr+1).slice(-2)}`:`${yr-1}-${String(yr).slice(-2)}`;return {mon,yr,ay}}
 function parseTrafficMonthly(book){const out={"2024-25":{},"2025-26":{},"2026-27":{}};const sh=book['Jaipuria - All Traffic'];if(!sh)return out;const h=sh.headers||[], map={};sh.rows.forEach(r=>map[cleanLive(r[0])]=r);for(let c=1;c<h.length;c++){const p=monthYearFromHeader(h[c]);if(!p||!out[p.ay])continue;out[p.ay][p.mon]={all:numLive(map['Total']?.[c]),organic:numLive(map['Organic Search']?.[c]),direct:numLive(map['Direct']?.[c]),ai:numLive(map['AI Assistant']?.[c])}}return out}
 function parseTrafficMetrics(book){const out={"2024-25":{organic:{},direct:{}},"2025-26":{organic:{},direct:{}},"2026-27":{organic:{},direct:{}}};for(const [sn,ch] of [['Jaipuria - Organic Traffic','organic'],['Jaipuria - Direct Traffic','direct']]){const sh=book[sn];if(!sh)continue;const h=sh.headers||[],map={};sh.rows.forEach(r=>map[cleanLive(r[0])]=r);for(let c=1;c<h.length;c++){const p=monthYearFromHeader(h[c]);if(!p||!out[p.ay])continue;out[p.ay][ch][p.mon]={sessions:numLive(map['Total Visits']?.[c]??map['Total Visits ']?.[c]),users:numLive(map['Total Users']?.[c]),new:numLive(map['New Users']?.[c]),bounce:numLive(map['Bounce Rate (%)']?.[c]),views:numLive(map['Views/Session']?.[c]??map['Views/Session ']?.[c])}}}return out}
@@ -1176,15 +1188,18 @@ function parseLeadRecords(book){
     };
     if(ci.created<0)throw new Error(`${sheets[ay]}: Created On column not found`);
 
-    // The Oct'26 column is part of the live 2026-27 sheet. We detect it by
-    // header only; row month is always determined from Created On when valid.
-    // This prevents future months from being fabricated while still supporting
-    // rows whose Created On value is blank/broken in the live sheet.
-    const leadMonthCols=[];
-    for(let c=0;c<h.length;c++){const p=leadMonthFromHeaderLive(h[c]);if(p&&p.ay===ay)leadMonthCols.push({c,...p})}
-    const hasOct26=leadMonthCols.some(x=>x.yr===2026&&x.month==='October');
+    // Some users append a month marker column such as Oct'26 to the lead sheet.
+    // Detect ALL academic-month headers. If a row has a value in one of those
+    // columns, that marker is allowed to supply the row month when Created On is
+    // blank/malformed. This is intentionally limited to the current/valid AY.
+    const monthCols=[];
+    for(let c=0;c<h.length;c++){
+      const p=leadMonthFromHeaderLive(h[c]);
+      if(p&&p.ay===ay)monthCols.push({c,...p});
+    }
     const cutoff=actualCutoffDateForAY(ay);
     const norm=v=>String(v??'').trim().toLowerCase();
+    const currentMonthIndex=currentAcademicMonthIndex();
 
     out[ay]=rows.map((r,rowIndex)=>{
       const d=parseDateLive(r[ci.created]);
@@ -1197,18 +1212,27 @@ function parseLeadRecords(book){
       const nonEmpty=r.filter(v=>cleanLive(v)!=='').length;
       if(!src && !stageRaw && nonEmpty<2)return null;
 
-      // For the current academic year, the Created On date is authoritative.
-      // Anything after the end of the current calendar month is future data and
-      // is excluded even if Google contains rows for Nov'26-Jul'27 already.
+      // Determine month from Created On first.
       let inferredDate=d;
-      if(inferredDate && cutoff && inferredDate.getTime()>cutoff.getTime()) return null;
-
-      // If a newly appended current-month row has a blank/malformed Created On,
-      // use the explicit Oct'26 sheet marker only for 2026-27. This is deliberately
-      // limited to the current month and never assigns future months.
-      if(!inferredDate && ay==='2026-27' && hasOct26 && !isFutureActualMonth('2026-27','October') && src && nonEmpty>=2){
-        inferredDate=new Date(2026,9,15,12,0,0);
+      let markerMonth='';
+      if(monthCols.length){
+        const marked=monthCols.filter(x=>cleanLive(r[x.c])!=='');
+        // If exactly one academic month marker is present, use it. If multiple
+        // markers exist, Created On remains authoritative.
+        if(!inferredDate && marked.length===1)markerMonth=marked[0].month;
       }
+
+      if(inferredDate && cutoff && inferredDate.getTime()>cutoff.getTime())return null;
+
+      if(!inferredDate && markerMonth){
+        const mi=monthIndex(markerMonth);
+        if(mi>=0 && (!isCurrentAcademicYear(ay) || mi<=currentMonthIndex)){
+          const year=mi>=5?Number(ay.slice(0,4))+1:Number(ay.slice(0,4));
+          const monthNum=mi+7>11?mi-5:mi+7; // Aug=8 ... Jul=7
+          inferredDate=new Date(year,monthNum-1,15,12,0,0);
+        }
+      }
+
       if(!inferredDate)return null;
       if(cutoff && inferredDate.getTime()>cutoff.getTime())return null;
 
@@ -1218,13 +1242,12 @@ function parseLeadRecords(book){
       const city=repeated(cityRaw)?'Unknown':cityRaw;
       const stage=repeated(stageRaw)?'Unknown':stageRaw;
       const txMonth=txd?txd.toLocaleString('en-US',{month:'long'}):'';
-      // Applications are based on Transaction Date. If a transaction is in a
-      // future month of the current AY, do not count it yet.
       const txIsFuture=txd && isFutureActualMonth(ay,txMonth);
+      const finalMonth=inferredDate.toLocaleString('en-US',{month:'long'});
       return {
-        m:inferredDate.toLocaleString('en-US',{month:'long'}),
+        m:finalMonth,
         t:txIsFuture?'':txMonth,
-        tx:txd?(txIsFuture?'':txd.toISOString()):'',
+        tx:txd?(txIsFuture?'':(isNaN(txd.getTime())?'':txd.toISOString())):'',
         src:src||'Unknown',owner:owner||'Unknown',sub:cleanLive(r[ci.sub])||'Blank',
         counter:cleanLive(r[ci.counter])||'Unassigned',state:state||'Unknown',city:city||'Unknown',stage:stage||'Unknown'
       };
@@ -1233,7 +1256,7 @@ function parseLeadRecords(book){
   return out;
 }
 function parseGeo(book){const out={states:{organic:{},direct:{}},cities:{organic:{},direct:{}}};const specs=[['Organic Traffic by States','states','organic'],['Direct Traffic by States','states','direct'],['Organic Traffic by Cities','cities','organic'],['Direct Traffic by Cities','cities','direct']];for(const [sn,type,ch] of specs){const sh=book[sn];if(!sh)continue;for(const [ay,start] of [['2026-27',0],['2025-26',10],['2024-25',20]]){out[type][ch][ay]={};for(const row of (sh.rows||[])){const name=cleanLive(row?.[start]);if(!name||normText(name)==='total')continue;const v=numLive(row?.[start+1]);if(!Number.isFinite(v))continue;const existing=Object.keys(out[type][ch][ay]).find(k=>normText(k)===normText(name));out[type][ch][ay][existing||name]=(out[type][ch][ay][existing||name]||0)+v}}}return out}
-function datasetHealth(book,records,monthly,geo){const checks=[];for(const ay of DATA.years){const n=records[ay]?.length||0;if(n<50)checks.push(`${ay} lead rows are incomplete (${n})`);const monthsFound=new Set((records[ay]||[]).map(r=>r.m));const req=ay==='2026-27'?1:8;if([...monthsFound].length<req)checks.push(`${ay} lead months are incomplete`);if(ay==='2026-27'){const sh=book['Leads - 2026-27'];const hasOct=(sh?.headers||[]).some(h=>{const p=leadMonthFromHeaderLive(h);return p?.ay==='2026-27'&&p?.month==='October'});if(hasOct&&!monthsFound.has('October'))checks.push('2026-27 October leads could not be read');}const trafficMonths=months.filter(m=>Number(monthly[ay]?.[m]?.all||0)>0);if(trafficMonths.length<(ay==='2026-27'?1:8))checks.push(`${ay} traffic months are incomplete`)}if(Object.keys(geo.states.organic['2026-27']||{}).length<5)checks.push('2026-27 state traffic is incomplete');return checks}
+function datasetHealth(book,records,monthly,geo){const checks=[];for(const ay of DATA.years){const n=records[ay]?.length||0;if(n<50)checks.push(`${ay} lead rows are incomplete (${n})`);const monthsFound=new Set((records[ay]||[]).map(r=>r.m));const req=ay==='2026-27'?(currentAcademicMonthIndex()>=2?3:1):8;if([...monthsFound].length<req)checks.push(`${ay} lead months are incomplete`);if(ay==='2026-27'){const sh=book['Leads - 2026-27'];const hasOct=(sh?.headers||[]).some(h=>{const p=leadMonthFromHeaderLive(h);return p?.ay==='2026-27'&&p?.month==='October'});if(hasOct&&!monthsFound.has('October'))checks.push('2026-27 October leads could not be read');}const trafficMonths=months.filter(m=>Number(monthly[ay]?.[m]?.all||0)>0);if(trafficMonths.length<(ay==='2026-27'?1:8))checks.push(`${ay} traffic months are incomplete`)}if(Object.keys(geo.states.organic['2026-27']||{}).length<5)checks.push('2026-27 state traffic is incomplete');return checks}
 function renderTargetVsAchievedLive(){
   const p=DATA.projection||[], ys='2026-27';
   const visibleMonths=p.filter(x=>!isFutureActualMonth(ys,x.m));
@@ -1258,11 +1281,27 @@ function renderTargetVsAchievedLive(){
 }
 async function applyLiveBook(book){
   const monthly=parseTrafficMonthly(book),metricsLive=parseTrafficMetrics(book),records=parseLeadRecords(book),{annual,projection,projTraffic}=parseAnnualAndProjection(book,monthly),geo=parseGeo(book);
-  // For the incomplete/current academic year, the detailed All Traffic sheet is the source of truth. This automatically picks up newly added months such as Oct'26. Historical full-year totals continue to come from Summary.
-  for(const ch of ['all','organic','direct','ai']) annual['2026-27'][ch]=months.reduce((sum,m)=>sum+trafficVal(ch,'2026-27',m),0);
-  const issues=datasetHealth(book,records,monthly,geo);if(issues.length)throw new Error('Google Sheet data validation failed: '+issues.join('; '));
-  DATA.records=records;DATA.traffic=monthly;DATA.metrics=metricsLive;DATA.projection=projection;DATA.projTraffic=projTraffic;TRAFFIC_ANNUAL=annual;GEO_TRAFFIC_CHANNELS=geo;DATA.refreshed=new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});$('refreshStamp').textContent=DATA.refreshed;
-  ['year','month','quality','source','state','owner'].forEach(id=>{if($(id))$(id).value=id==='year'?'2026-27':'all'});updateYearScopedFilters();renderTargetVsAchievedLive();setStatus('✓ Dashboard updated live from Google Sheet.','ok');document.body.classList.remove('live-loading');$('liveOverlay')?.remove();setView('summary')
+  for(const ch of ['all','organic','direct','ai']) annual['2026-27'][ch]=months.filter(m=>!isFutureActualMonth('2026-27',m)).reduce((sum,m)=>sum+trafficVal(ch,'2026-27',m),0);
+
+  // Hard guard: the current 2026-27 live lead sheet must contain the current
+  // three actual months (Aug/Sep/Oct as of October 2026) before it is committed.
+  const currentLeadRows=records['2026-27']||[];
+  const monthCounts=Object.fromEntries(months.map(m=>[m,currentLeadRows.filter(r=>normText(r.m)===normText(m)).length]));
+  const expectedActualMonths=months.filter(m=>!isFutureActualMonth('2026-27',m));
+  const missingActual=expectedActualMonths.filter(m=>(monthCounts[m]||0)===0);
+  if(missingActual.length)throw new Error(`Live Leads - 2026-27 data is incomplete. Missing actual month(s): ${missingActual.join(', ')}. Dashboard was not updated.`);
+
+  const issues=datasetHealth(book,records,monthly,geo);
+  if(issues.length)throw new Error('Google Sheet data validation failed: '+issues.join('; '));
+
+  DATA.records=records;DATA.traffic=monthly;DATA.metrics=metricsLive;DATA.projection=projection;DATA.projTraffic=projTraffic;TRAFFIC_ANNUAL=annual;GEO_TRAFFIC_CHANNELS=geo;
+  DATA.refreshed=new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});
+  $('refreshStamp').textContent=DATA.refreshed;
+  ['year','month','quality','source','state','owner'].forEach(id=>{if($(id))$(id).value=id==='year'?'2026-27':'all'});
+  updateYearScopedFilters();if($('month'))$('month').value='all';
+  renderTargetVsAchievedLive();
+  setStatus(`✓ Live Google Sheet updated (${book['Leads - 2026-27']?.source||'Google Sheet'}) · 2026-27 Leads: ${currentLeadRows.length} · Aug ${monthCounts['August']||0} · Sep ${monthCounts['September']||0} · Oct ${monthCounts['October']||0}`,'ok');
+  document.body.classList.remove('live-loading');$('liveOverlay')?.remove();setView('summary');
 }
 async function loadLiveDashboard(){const btn=$('refreshBtn');if(btn){btn.disabled=true;btn.textContent='↻ Loading…'};try{const book=await fetchLiveBook();await applyLiveBook(book);if(btn){btn.textContent='✓ Data Refreshed';setTimeout(()=>{btn.textContent='↻ Refresh Excel';btn.disabled=false},1600)}}catch(err){console.error('Google Sheet load failed',err);setStatus(`Google Sheet load failed — no stale dashboard data shown. ${err.message}`,'error');document.body.classList.remove('live-loading');$('liveOverlay')?.remove();if(btn){btn.textContent='↻ Retry Google Sheet';btn.disabled=false}}}
 function setStatus(msg,type){let el=$('liveStatus');if(!el){el=document.createElement('div');el.id='liveStatus';el.style.cssText='padding:10px 18px;border-bottom:1px solid #d9cfe0;font:600 13px Segoe UI,Arial';document.querySelector('header')?.after(el)}el.textContent=msg;el.style.background=type==='ok'?'#eaf8ef':'#fff1f1';el.style.color=type==='ok'?'#176b3b':'#a52f36'}
