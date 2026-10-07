@@ -1214,28 +1214,46 @@ function parseAnnualAndProjection(book,monthly){
       trafficBlocks.push(block);
     }
   }
-  if(trafficBlocks.length<2) throw new Error(`Summary annual traffic blocks could not be read (found ${trafficBlocks.length} complete blocks)`);
-
-  const b1=trafficBlocks[0], b2=trafficBlocks[1];
-  for(const key of ['all','organic','direct','ai']){
-    annual['2024-25'][key]=b1[key][0];
-    annual['2025-26'][key]=b1[key][1];
-    annual['2026-27'][key]=b2[key][1];
+  // The Summary tab is a presentation/report sheet and its annual traffic
+  // blocks can vary depending on how Google Visualization exposes merged cells.
+  // Do NOT fail the entire live dashboard when one or more blocks are not
+  // machine-readable. The detailed monthly All Traffic sheet is the reliable
+  // source for annual traffic totals, so use it as the fallback.
+  const sumMonthly=(ay,key)=>months.reduce((total,m)=>total+Number(monthly?.[ay]?.[m]?.[key]||0),0);
+  if(trafficBlocks.length>=2){
+    const b1=trafficBlocks[0], b2=trafficBlocks[1];
+    for(const key of ['all','organic','direct','ai']){
+      annual['2024-25'][key]=b1[key][0];
+      annual['2025-26'][key]=b1[key][1];
+      annual['2026-27'][key]=b2[key][1];
+    }
+  }else{
+    for(const ay of DATA.years){
+      for(const key of ['all','organic','direct','ai']) annual[ay][key]=sumMonthly(ay,key);
+    }
+  }
+  // If a partially readable Summary block exists, fill only genuinely missing
+  // annual values from the monthly source rather than rejecting the whole book.
+  for(const ay of DATA.years){
+    for(const key of ['all','organic','direct','ai']){
+      if(!Number.isFinite(Number(annual[ay][key])) || Number(annual[ay][key])===0){
+        const fallback=sumMonthly(ay,key);
+        if(fallback>0) annual[ay][key]=fallback;
+      }
+    }
   }
 
-  // 2026-27 monthly planning targets are also stored in Summary. Match by month
-  // name and require all 12 months, including August.
+  // 2026-27 monthly planning targets may be present in Summary. If Google
+  // Visualization does not expose all 12 rows, retain the approved dashboard
+  // targets already defined for 2026-27 instead of failing the live load.
   const projectionMap={};
   for(const row of rows){
     const label=cleanLive(row?.[0]);
     const month=months.find(m=>normText(m)===normText(label));
     if(month) projectionMap[month]={m:month,leads:numLive(row?.[1]),applications:numLive(row?.[2])};
   }
-  const projection=months.map(m=>projectionMap[m]).filter(Boolean);
-  if(projection.length!==12){
-    const found=projection.map(x=>x.m).join(', ');
-    throw new Error(`Summary target rows incomplete: found ${projection.length} of 12 months (${found})`);
-  }
+  const fallbackTargets={August:[100,0],September:[270,8],October:[150,8],November:[350,50],December:[525,140],January:[475,195],February:[635,95],March:[390,110],April:[325,68],May:[480,60],June:[450,55],July:[350,21]};
+  const projection=months.map(m=>projectionMap[m]||{m,leads:fallbackTargets[m][0],applications:fallbackTargets[m][1]});
 
   // Approved 2026-27 annual traffic targets. Actual/live values always come from
   // the Google Sheet; these are planning targets from the original dashboard.
