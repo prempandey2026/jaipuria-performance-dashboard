@@ -1189,8 +1189,42 @@ async function fetchLiveBook(){
   for(const n of LIVE_SHEETS)b[n]=await fetchSheetRows(n);
   return b;
 }
-function monthYearFromHeader(h){const m=cleanLive(h).match(/^([A-Za-z]{3})'?\s*(\d{2})$/);if(!m)return null;const mon=new Date(`${m[1]} 1, 20${m[2]}`).toLocaleString('en-US',{month:'long'});const yr=2000+Number(m[2]);const ay=['August','September','October','November','December'].includes(mon)?`${yr}-${String(yr+1).slice(-2)}`:`${yr-1}-${String(yr).slice(-2)}`;return {mon,yr,ay}}
-function parseTrafficMonthly(book){const out={"2024-25":{},"2025-26":{},"2026-27":{}};const sh=book['Jaipuria - All Traffic'];if(!sh)return out;const h=sh.headers||[], map={};sh.rows.forEach(r=>map[cleanLive(r[0])]=r);for(let c=1;c<h.length;c++){const p=monthYearFromHeader(h[c]);if(!p||!out[p.ay])continue;out[p.ay][p.mon]={all:numLive(map['Total']?.[c]),organic:numLive(map['Organic Search']?.[c]),direct:numLive(map['Direct']?.[c]),ai:numLive(map['AI Assistant']?.[c])}}return out}
+function monthYearFromHeader(h){
+  const raw=cleanLive(h);
+  const m=raw.match(/^([A-Za-z]{3,9})[\s'’\-_/]*(\d{2}|\d{4})$/);
+  if(!m)return null;
+  const monDate=new Date(`${m[1]} 1, ${m[2].length===2?'20'+m[2]:m[2]}`);
+  if(isNaN(monDate.getTime()))return null;
+  const mon=monDate.toLocaleString('en-US',{month:'long'});
+  const yr=monDate.getFullYear();
+  const ay=['August','September','October','November','December'].includes(mon)?`${yr}-${String(yr+1).slice(-2)}`:`${yr-1}-${String(yr).slice(-2)}`;
+  return {mon,yr,ay};
+}
+function rowLabelLive(v){return normHeaderLive(v).replace(/[:_-]+/g,' ').replace(/\s+/g,' ').trim()}
+function findTrafficRowLive(map, aliases){
+  for(const a of aliases){
+    const key=Object.keys(map).find(k=>rowLabelLive(k)===rowLabelLive(a));
+    if(key)return map[key];
+  }
+  return undefined;
+}
+function parseTrafficMonthly(book){
+  const out={"2024-25":{},"2025-26":{},"2026-27":{}};
+  const sh=book['Jaipuria - All Traffic'];
+  if(!sh)return out;
+  const h=sh.headers||[], map={};
+  (sh.rows||[]).forEach(r=>{const k=cleanLive(r?.[0]);if(k)map[k]=r});
+  const total=findTrafficRowLive(map,['Total','Total Traffic','Total Visits','Total Users']);
+  const organic=findTrafficRowLive(map,['Organic Search','Organic Traffic','Organic']);
+  const direct=findTrafficRowLive(map,['Direct','Direct Traffic']);
+  const ai=findTrafficRowLive(map,['AI Assistant','AI Traffic','AI']);
+  for(let c=1;c<h.length;c++){
+    const p=monthYearFromHeader(h[c]);
+    if(!p||!out[p.ay])continue;
+    out[p.ay][p.mon]={all:numLive(total?.[c]),organic:numLive(organic?.[c]),direct:numLive(direct?.[c]),ai:numLive(ai?.[c])};
+  }
+  return out;
+}
 function parseTrafficMetrics(book){const out={"2024-25":{organic:{},direct:{}},"2025-26":{organic:{},direct:{}},"2026-27":{organic:{},direct:{}}};for(const [sn,ch] of [['Jaipuria - Organic Traffic','organic'],['Jaipuria - Direct Traffic','direct']]){const sh=book[sn];if(!sh)continue;const h=sh.headers||[],map={};sh.rows.forEach(r=>map[cleanLive(r[0])]=r);for(let c=1;c<h.length;c++){const p=monthYearFromHeader(h[c]);if(!p||!out[p.ay])continue;out[p.ay][ch][p.mon]={sessions:numLive(map['Total Visits']?.[c]??map['Total Visits ']?.[c]),users:numLive(map['Total Users']?.[c]),new:numLive(map['New Users']?.[c]),bounce:numLive(map['Bounce Rate (%)']?.[c]),views:numLive(map['Views/Session']?.[c]??map['Views/Session ']?.[c])}}}return out}
 function parseAnnualAndProjection(book,monthly){
   const annual={"2024-25":{all:0,organic:0,direct:0,ai:0},"2025-26":{all:0,organic:0,direct:0,ai:0},"2026-27":{all:0,organic:0,direct:0,ai:0}};
@@ -1372,7 +1406,29 @@ function parseLeadRecords(book){
 }
 
 function parseGeo(book){const out={states:{organic:{},direct:{}},cities:{organic:{},direct:{}}};const specs=[['Organic Traffic by States','states','organic'],['Direct Traffic by States','states','direct'],['Organic Traffic by Cities','cities','organic'],['Direct Traffic by Cities','cities','direct']];for(const [sn,type,ch] of specs){const sh=book[sn];if(!sh)continue;for(const [ay,start] of [['2026-27',0],['2025-26',10],['2024-25',20]]){out[type][ch][ay]={};for(const row of (sh.rows||[])){const name=cleanLive(row?.[start]);if(!name||normText(name)==='total')continue;const v=numLive(row?.[start+1]);if(!Number.isFinite(v))continue;const existing=Object.keys(out[type][ch][ay]).find(k=>normText(k)===normText(name));out[type][ch][ay][existing||name]=(out[type][ch][ay][existing||name]||0)+v}}}return out}
-function datasetHealth(book,records,monthly,geo){const checks=[];for(const ay of DATA.years){const n=records[ay]?.length||0;if(n<50)checks.push(`${ay} lead rows are incomplete (${n})`);const monthsFound=new Set((records[ay]||[]).map(r=>r.m));const req=ay==='2026-27'?1:8;if([...monthsFound].length<req)checks.push(`${ay} lead months are incomplete`);if(ay==='2026-27'){const sh=book['Leads - 2026-27'];const hasOct=(sh?.headers||[]).some(h=>{const p=leadMonthFromHeaderLive(h);return p?.ay==='2026-27'&&p?.month==='October'});if(hasOct&&!monthsFound.has('October'))checks.push('2026-27 October leads could not be read');}const trafficMonths=months.filter(m=>Number(monthly[ay]?.[m]?.all||0)>0);if(trafficMonths.length<(ay==='2026-27'?1:8))checks.push(`${ay} traffic months are incomplete`)}if(Object.keys(geo.states.organic['2026-27']||{}).length<5)checks.push('2026-27 state traffic is incomplete');return checks}
+function datasetHealth(book,records,monthly,geo){
+  const checks=[];
+  for(const ay of DATA.years){
+    const n=records[ay]?.length||0;
+    if(n<50)checks.push(`${ay} lead rows are incomplete (${n})`);
+    const monthsFound=new Set((records[ay]||[]).map(r=>r.m).filter(Boolean));
+    const req=ay==='2026-27'?1:8;
+    if([...monthsFound].length<req)checks.push(`${ay} lead months are incomplete`);
+    if(ay==='2026-27'){
+      const sh=book['Leads - 2026-27'];
+      const hasOct=(sh?.headers||[]).some(h=>{const p=leadMonthFromHeaderLive(h);return p?.ay==='2026-27'&&p?.month==='October'});
+      if(hasOct&&!monthsFound.has('October'))checks.push('2026-27 October leads could not be read');
+    }
+    // Traffic is allowed to be sparse/partially populated. Do not reject the
+    // entire dashboard merely because some historical months are blank or
+    // because a published report exposes fewer monthly columns. The renderer
+    // already handles missing values as zero/—.
+    const trafficMonths=months.filter(m=>monthly[ay]?.[m] && Object.values(monthly[ay][m]).some(v=>Number(v)>0));
+    if(trafficMonths.length===0)checks.push(`${ay} traffic data could not be read`);
+  }
+  if(Object.keys(geo.states.organic['2026-27']||{}).length<5)checks.push('2026-27 state traffic is incomplete');
+  return checks;
+}
 const CURRENT_ACADEMIC_YEAR='2026-27';
 function currentAcademicMonthIndex(){
   const now=new Date(),m=now.getMonth();
