@@ -116,7 +116,7 @@ td{font-size:14px;padding:12px 11px;white-space:nowrap}
 }
 @media(max-width:1200px){.nav{overflow:visible!important;flex-wrap:wrap!important}.header-inner{align-items:center}.header-tools{margin-left:auto}.refresh-note{white-space:normal;line-height:1.15;text-align:right;max-width:210px}}
 /* Traffic KPI cards: keep labels readable and values on a clean second line */
-#summaryTraffic,#trafficKpis{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+#summaryTraffic,#trafficKpis{grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
 #summaryTraffic .kpi,#trafficKpis .kpi{min-width:0;min-height:112px;padding:14px 13px;justify-content:center}
 #summaryTraffic .kpi-label,#trafficKpis .kpi-label{font-size:13px;line-height:1.2;min-height:32px;display:flex;align-items:flex-start}
 #summaryTraffic .kpi-value,#trafficKpis .kpi-value{font-size:24px;line-height:1.05;white-space:nowrap;overflow:visible}
@@ -634,7 +634,7 @@ html,body{max-width:100%;overflow-x:hidden}
         <tr><td>August</td><td>100</td><td>0</td><td>0%</td><td>178</td><td>1</td><td>0.56%</td><td>78%</td><td>-</td></tr><tr><td>September</td><td>270</td><td>8</td><td>3%</td><td>251</td><td>12</td><td>4.78%</td><td>-7%</td><td>50%</td></tr><tr><td>October</td><td>150</td><td>8</td><td>5%</td><td>47</td><td>4</td><td>8.51%</td><td>-69%</td><td>-50%</td></tr><tr><td>November</td><td>350</td><td>50</td><td>14%</td><td></td><td></td><td>0.00%</td><td>-100%</td><td>-100%</td></tr><tr><td>December</td><td>525</td><td>140</td><td>27%</td><td></td><td></td><td>0.00%</td><td>-100%</td><td>-100%</td></tr><tr><td>January</td><td>475</td><td>195</td><td>41%</td><td></td><td></td><td>0.00%</td><td>-100%</td><td>-100%</td></tr><tr><td>February</td><td>635</td><td>95</td><td>15%</td><td></td><td></td><td>0.00%</td><td>-100%</td><td>-100%</td></tr><tr><td>March</td><td>390</td><td>110</td><td>28%</td><td></td><td></td><td>0.00%</td><td>-100%</td><td>-100%</td></tr><tr><td>April</td><td>325</td><td>68</td><td>21%</td><td></td><td></td><td>0.00%</td><td>-100%</td><td>-100%</td></tr><tr><td>May</td><td>480</td><td>60</td><td>13%</td><td></td><td></td><td>0.00%</td><td>-100%</td><td>-100%</td></tr><tr><td>June</td><td>450</td><td>55</td><td>12%</td><td></td><td></td><td>0.00%</td><td>-100%</td><td>-100%</td></tr><tr><td>July</td><td>350</td><td>21</td><td>6%</td><td></td><td></td><td>0.00%</td><td>-100%</td><td>-100%</td></tr>
         <tr class="leads-total">
           <td>Total (Till 30 July)</td><td>4500</td><td>810</td><td>18%</td>
-          <td>430</td><td>13</td><td>3.02%</td><td>-90%</td><td>-98%</td>
+          <td>476</td><td>17</td><td>3.57%</td><td>-89.42%</td><td>-97.90%</td>
         </tr>
       </tbody>
     </table>
@@ -672,8 +672,8 @@ html,body{max-width:100%;overflow-x:hidden}
         <th>Growth %</th>
       </tr></thead>
       <tbody>
-        <tr><td>Total Leads</td><td>4,500</td><td>430</td><td>-90.44</td></tr>
-        <tr><td>Applications</td><td>810</td><td>13</td><td>-98.40</td></tr>
+        <tr><td>Total Leads</td><td>4,500</td><td id="overallLeadAchieved">476</td><td id="overallLeadGrowth">-89.42</td></tr>
+        <tr><td>Applications</td><td>810</td><td id="overallAppAchieved">17</td><td id="overallAppGrowth">-97.90</td></tr>
         <tr><td>Applications (Old Data)</td><td>35</td><td>1</td><td>-97.14</td></tr>
       </tbody>
     </table>
@@ -733,11 +733,11 @@ const $=id=>document.getElementById(id);const esc=s=>String(s??'').replace(/[&<>
 const fmt=n=>Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:0});const pct=n=>Number(n||0).toFixed(2)+'%';const growth=(a,b)=>a?((b-a)/a*100):null;const signPct=n=>n===null?'—':(n>0?'+':'')+n.toFixed(2)+'%';const cls=n=>n===null?'neutral':n>0?'positive':n<0?'negative':'neutral';
 function filters(){return {year:$('year').value,month:$('month').value,quality:$('quality').value,source:$('source').value,state:$('state').value,owner:$('owner').value}}
 function activeYears(){const y=filters().year;return y==='all'?DATA.years:[y]}
-function recs(y,extra={}){const f=filters(),norm=v=>String(v??'').trim().toLowerCase();return (DATA.records[y]||[]).filter(r=>(extra.ignoreMonth||f.month==='all'||norm(r.m)===norm(f.month))&&(f.quality==='all'||norm(r.sub)===norm(f.quality))&&(f.source==='all'||norm(r.src)===norm(f.source))&&(f.state==='all'||norm(r.state)===norm(f.state))&&(extra.ignoreOwner||f.owner==='all'||norm(r.owner)===norm(f.owner)))}
+function recs(y,extra={}){const f=filters(),norm=v=>String(v??'').trim().toLowerCase();return (DATA.records[y]||[]).filter(r=>(extra.ignoreMonth||f.month==='all'||norm(r.m)===norm(f.month))&&isVisibleLeadMonth(y,r.m)&&(f.quality==='all'||norm(r.sub)===norm(f.quality))&&(f.source==='all'||norm(r.src)===norm(f.source))&&(f.state==='all'||norm(r.state)===norm(f.state))&&(extra.ignoreOwner||f.owner==='all'||norm(r.owner)===norm(f.owner)))}
 function baseRecs(y){return recs(y,{ignoreMonth:true})}
 function txRecs(y,mn=null){const rs=baseRecs(y).filter(r=>String(r.t||'').trim()!=='');return mn===null||mn==='all'?rs:rs.filter(r=>normText(r.t)===normText(mn))}
 function selectionMetrics(y){const f=filters(),leadRs=recs(y),txRs=txRecs(y,f.month);return metrics(leadRs,txRs)}
-function monthMetrics(y,mn){return metrics((DATA.records[y]||[]).filter(r=>normText(r.m)===normText(mn)&&matchesNonMonthFilters(r)),txRecs(y,mn))}
+function monthMetrics(y,mn){if(!isVisibleLeadMonth(y,mn))return metrics([],[]);return metrics((DATA.records[y]||[]).filter(r=>isVisibleLeadMonth(y,r.m)&&normText(r.m)===normText(mn)&&matchesNonMonthFilters(r)),txRecs(y,mn))}
 function matchesNonMonthFilters(r){const f=filters(),norm=v=>String(v??'').trim().toLowerCase();return (f.quality==='all'||norm(r.sub)===norm(f.quality))&&(f.source==='all'||norm(r.src)===norm(f.source))&&(f.state==='all'||norm(r.state)===norm(f.state))&&(f.owner==='all'||norm(r.owner)===norm(f.owner))}
 function metrics(rs,txRs=rs){let x={leads:rs.length,applications:0,interview:0,offer:0,full:0,partial:0,registered:0,refund:0};rs.forEach(r=>{if(r.stage==='Interview Done')x.interview++;if(r.stage==='Offer Sent')x.offer++});txRs.forEach(r=>{if(r.t)x.applications++;if(r.stage==='Full Fee Paid')x.full++;if(r.stage==='Partial Fee Paid')x.partial++;if(r.stage==='Registered')x.registered++;if(r.stage==='Refund')x.refund++});x.admissions=x.full+x.partial+x.registered;x.net=x.admissions-x.refund;x.conversion=x.leads?x.applications/x.leads*100:0;x.appToAdm=x.applications?x.admissions/x.applications*100:0;x.appToInterview=x.applications?x.interview/x.applications*100:0;x.interviewToOffer=x.interview?x.offer/x.interview*100:0;x.offerToAdm=x.offer?x.admissions/x.offer*100:0;return x}
 function sumMetrics(ys){let z={leads:0,applications:0,interview:0,offer:0,full:0,partial:0,registered:0,refund:0,admissions:0,net:0};ys.forEach(y=>{const m=selectionMetrics(y);Object.keys(z).forEach(k=>z[k]+=m[k]||0)});z.conversion=z.leads?z.applications/z.leads*100:0;z.appToAdm=z.applications?z.admissions/z.applications*100:0;z.appToInterview=z.applications?z.interview/z.applications*100:0;z.interviewToOffer=z.interview?z.offer/z.interview*100:0;z.offerToAdm=z.offer?z.admissions/z.offer*100:0;return z}
@@ -995,8 +995,9 @@ function uniqueClean(vals){const seen=new Map();vals.forEach(v=>{const c=cleanTe
 function updateYearScopedFilters(){
  const y=$('year').value, ys=y==='all'?DATA.years:[y], current={month:$('month').value,state:$('state').value,quality:$('quality').value,source:$('source').value,owner:$('owner').value};
  const rr=ys.flatMap(yy=>DATA.records[yy]||[]);
- const availableMonths=months.filter(m=>rr.some(r=>normText(r.m)===normText(m)));
- const states=uniqueClean(rr.map(r=>r.state)),qualities=uniqueClean(rr.map(r=>r.sub)),sources=uniqueClean(rr.map(r=>r.src)),owners=uniqueClean(rr.map(r=>r.owner));
+ const visibleRecords=rr.filter(r=>ys.every(yy=>yy!==CURRENT_ACADEMIC_YEAR)||isVisibleLeadMonth(CURRENT_ACADEMIC_YEAR,r.m));
+ const availableMonths=months.filter(m=>ys.every(yy=>yy!==CURRENT_ACADEMIC_YEAR)||isVisibleLeadMonth(CURRENT_ACADEMIC_YEAR,m)&&rr.some(r=>normText(r.m)===normText(m)));
+ const states=uniqueClean(visibleRecords.map(r=>r.state)),qualities=uniqueClean(visibleRecords.map(r=>r.sub)),sources=uniqueClean(visibleRecords.map(r=>r.src)),owners=uniqueClean(visibleRecords.map(r=>r.owner));
  fillSelect('month',availableMonths,'All months');fillSelect('state',states);fillSelect('quality',qualities);fillSelect('source',sources);fillSelect('owner',owners);
  ['month','state','quality','source','owner'].forEach(id=>{const opts=[...$(id).options].map(o=>o.value);$(id).value=opts.includes(current[id])?current[id]:'all'});
 }
@@ -1007,7 +1008,7 @@ function initFilters(){
 
 function configureFilters(){const show=(id,on)=>$(id).style.display=on?'block':'none';const restrictedYear=currentView==='traffic'||currentView==='comparison';const currentYear=$('year').value;const desired=restrictedYear?(currentYear==='all'?DATA.years[DATA.years.length-1]:currentYear):currentYear;const opts=restrictedYear?DATA.years:['all',...DATA.years];$('year').innerHTML=opts.map(y=>`<option value="${esc(y)}">${y==='all'?'All':y}</option>`).join('');$('year').value=opts.includes(desired)?desired:opts[restrictedYear?opts.length-1:0];show('qualityFilter',currentView==='summary'||currentView==='leads'||currentView==='state');show('sourceFilter',['summary','leads','comparison','state'].includes(currentView));show('stateFilter',['summary','leads','comparison','state'].includes(currentView));show('ownerFilter',currentView==='leads');$('filters').style.display=currentView==='target'?'none':'flex';$('resetBtn').style.display=currentView==='target'?'none':'block'}
 function render(){configureFilters();if(currentView==='summary')renderSummary();else if(currentView==='leads')renderLeads();else if(currentView==='traffic')renderTraffic();else if(currentView==='comparison')renderComparison();else if(currentView==='state')renderState();else if(currentView==='target')renderProjection()}
-function setView(v){currentView=v;['year','month','quality','source','state','owner'].forEach(id=>{if($(id))$(id).value='all'});trafficChannel='all';document.querySelectorAll('.traffic-tab').forEach(x=>x.classList.toggle('active',x.dataset.channel==='all'));if(v==='target'){const y=$('year');if(y)y.value='2026-27';const m=$('month');if(m)m.value='all';}document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.dataset.view===v));document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===v));updateYearScopedFilters();render()}
+function setView(v){currentView=v;const y=$('year');if(y)y.value='2026-27';['month','quality','source','state','owner'].forEach(id=>{if($(id))$(id).value='all'});trafficChannel='all';document.querySelectorAll('.traffic-tab').forEach(x=>x.classList.toggle('active',x.dataset.channel==='all'));if(v==='target'){if(y)y.value='2026-27';const m=$('month');if(m)m.value='all';}document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.dataset.view===v));document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===v));updateYearScopedFilters();render()}
 
 document.querySelectorAll('#nav button').forEach(b=>b.addEventListener('click',()=>setView(b.dataset.view)));['year','month','quality','source','state','owner'].forEach(id=>$(id).addEventListener('change',()=>{if(id==='year')updateYearScopedFilters();render()}));$('resetBtn').addEventListener('click',()=>{['year','month','quality','source','state','owner'].forEach(id=>$(id).value='all');updateYearScopedFilters();render()});document.querySelectorAll('.traffic-tab').forEach(b=>b.addEventListener('click',()=>{trafficChannel=b.dataset.channel;document.querySelectorAll('.traffic-tab').forEach(x=>x.classList.toggle('active',x===b));renderTraffic()}));
 // LIVE GOOGLE SHEET DATA ONLY — no embedded Excel dataset is used at runtime. Build: LIVE-SHEET-REFRESH-OCT26-LEADS-FIX-2026-10-06
@@ -1040,12 +1041,40 @@ function parseDateLive(v){
 
 function normHeaderLive(v){return cleanLive(v).replace(/^\uFEFF/,'').toLowerCase().replace(/[^a-z0-9]+/g,'')}
 function findHeaderIndexLive(headers,aliases){const wanted=(aliases||[]).map(normHeaderLive);for(let i=0;i<headers.length;i++)if(wanted.includes(normHeaderLive(headers[i])))return i;return -1}
+let PUBLISHED_GIDS_CACHE=null;
+async function discoverPublishedSheetGids(){
+  if(PUBLISHED_GIDS_CACHE)return PUBLISHED_GIDS_CACHE;
+  const out={};
+  try{
+    const url=`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/pubhtml?_= ${Date.now()}`.replace('?_= ','?_=');
+    const r=await fetch(url,{cache:'no-store',credentials:'omit'});
+    if(r.ok){
+      const html=await r.text();
+      const patterns=[
+        /(?:sheetName|name|title)["']?\s*[:=]\s*["']([^"']+)["'][\s\S]{0,500}?(?:gid|sheetId)["']?\s*[:=]\s*["']?(\d+)/gi,
+        /(?:gid|sheetId)["']?\s*[:=]\s*["']?(\d+)["']?[\s\S]{0,500}?(?:sheetName|name|title)["']?\s*[:=]\s*["']([^"']+)["']/gi,
+        /[?&]gid=(\d+)[^>]{0,300}>([^<]+)</gi
+      ];
+      for(const re of patterns){
+        let m;
+        while((m=re.exec(html))){
+          const a=m[1],b=m[2];
+          if(/^\d+$/.test(a)) out[cleanLive(b)]=a; else out[cleanLive(a)]=b;
+        }
+      }
+    }
+  }catch(e){}
+  PUBLISHED_GIDS_CACHE=out;
+  return out;
+}
 async function fetchSheetRows(sheetName){
-  const q=encodeURIComponent(sheetName), stamp=Date.now();
-  const urls=[
+  const q=encodeURIComponent(sheetName), stamp=Date.now(), gids=await discoverPublishedSheetGids();
+  const urls=[];
+  if(gids[sheetName])urls.push(`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${encodeURIComponent(gids[sheetName])}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`);
+  urls.push(
     `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`,
     `https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`
-  ];
+  );
   let last='';
   for(const url of urls){
     try{
@@ -1197,14 +1226,18 @@ function parseLeadRecords(book){
 
 function parseGeo(book){const out={states:{organic:{},direct:{}},cities:{organic:{},direct:{}}};const specs=[['Organic Traffic by States','states','organic'],['Direct Traffic by States','states','direct'],['Organic Traffic by Cities','cities','organic'],['Direct Traffic by Cities','cities','direct']];for(const [sn,type,ch] of specs){const sh=book[sn];if(!sh)continue;for(const [ay,start] of [['2026-27',0],['2025-26',10],['2024-25',20]]){out[type][ch][ay]={};for(const row of (sh.rows||[])){const name=cleanLive(row?.[start]);if(!name||normText(name)==='total')continue;const v=numLive(row?.[start+1]);if(!Number.isFinite(v))continue;const existing=Object.keys(out[type][ch][ay]).find(k=>normText(k)===normText(name));out[type][ch][ay][existing||name]=(out[type][ch][ay][existing||name]||0)+v}}}return out}
 function datasetHealth(book,records,monthly,geo){const checks=[];for(const ay of DATA.years){const n=records[ay]?.length||0;if(n<50)checks.push(`${ay} lead rows are incomplete (${n})`);const monthsFound=new Set((records[ay]||[]).map(r=>r.m));const req=ay==='2026-27'?1:8;if([...monthsFound].length<req)checks.push(`${ay} lead months are incomplete`);if(ay==='2026-27'){const sh=book['Leads - 2026-27'];const hasOct=(sh?.headers||[]).some(h=>{const p=leadMonthFromHeaderLive(h);return p?.ay==='2026-27'&&p?.month==='October'});if(hasOct&&!monthsFound.has('October'))checks.push('2026-27 October leads could not be read');}const trafficMonths=months.filter(m=>Number(monthly[ay]?.[m]?.all||0)>0);if(trafficMonths.length<(ay==='2026-27'?1:8))checks.push(`${ay} traffic months are incomplete`)}if(Object.keys(geo.states.organic['2026-27']||{}).length<5)checks.push('2026-27 state traffic is incomplete');return checks}
+const CURRENT_ACADEMIC_YEAR='2026-27';
 function currentAcademicMonthIndex(){
   const now=new Date(),m=now.getMonth();
   return m>=7?m-7:5+m;
 }
 function isAchievedLeadMonth(ay,mn){
-  if(ay!=='2026-27')return true;
+  if(ay!==CURRENT_ACADEMIC_YEAR)return true;
   const i=months.indexOf(mn);
   return i>=0&&i<=currentAcademicMonthIndex();
+}
+function isVisibleLeadMonth(ay,mn){
+  return isAchievedLeadMonth(ay,mn);
 }
 function renderTargetVsAchievedLive(){
   const p=DATA.projection||[],ys='2026-27',recs=DATA.records[ys]||[];
@@ -1226,6 +1259,12 @@ function renderTargetVsAchievedLive(){
   const orgA=achMonths.reduce((a,m)=>a+trafficVal('organic',ys,m),0),dirA=achMonths.reduce((a,m)=>a+trafficVal('direct',ys,m),0),aiA=achMonths.reduce((a,m)=>a+trafficVal('ai',ys,m),0),combA=orgA+dirA+aiA;
   const tt=document.querySelector('#overallTargetVsAchieved tbody');
   if(tt)tt.innerHTML=`<tr><td>Organic Traffic</td><td>${fmt(t.organic)}</td><td>${fmt(orgA)}</td><td>${signPct(t.organic?((orgA-t.organic)/t.organic*100):null)}</td></tr><tr><td>Direct Traffic</td><td>${fmt(t.direct)}</td><td>${fmt(dirA)}</td><td>${signPct(t.direct?((dirA-t.direct)/t.direct*100):null)}</td></tr><tr><td>AI Assistant</td><td>${t.ai?fmt(t.ai):'—'}</td><td>${fmt(aiA)}</td><td>${t.ai?signPct((aiA-t.ai)/t.ai*100):'—'}</td></tr><tr class="traffic-total"><td>Organic+Direct+AI Assistant</td><td>${fmt(Number(t.combined||0))}</td><td>${fmt(combA)}</td><td>${signPct(Number(t.combined||0)?((combA-Number(t.combined||0))/Number(t.combined||0)*100):null)}</td></tr>`;
+  const overallLeads=actual.length, overallApps=actualA;
+  const leadGrowth=totalT?((overallLeads-totalT)/totalT*100):null, appGrowth=totalA?((overallApps-totalA)/totalA*100):null;
+  if($('overallLeadAchieved'))$('overallLeadAchieved').textContent=fmt(overallLeads);
+  if($('overallLeadGrowth'))$('overallLeadGrowth').textContent=leadGrowth==null?'—':leadGrowth.toFixed(2);
+  if($('overallAppAchieved'))$('overallAppAchieved').textContent=fmt(overallApps);
+  if($('overallAppGrowth'))$('overallAppGrowth').textContent=appGrowth==null?'—':appGrowth.toFixed(2);
 }
 
 async function applyLiveBook(book){
