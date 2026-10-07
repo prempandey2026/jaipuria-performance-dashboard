@@ -994,9 +994,8 @@ function fillSelect(id,vals,label='All'){const el=$(id);el.innerHTML=`<option va
 function uniqueClean(vals){const seen=new Map();vals.forEach(v=>{const c=cleanText(v);if(c&&!seen.has(normText(c)))seen.set(normText(c),c)});return [...seen.values()].sort((a,b)=>a.localeCompare(b))}
 function updateYearScopedFilters(){
  const y=$('year').value, ys=y==='all'?DATA.years:[y], current={month:$('month').value,state:$('state').value,quality:$('quality').value,source:$('source').value,owner:$('owner').value};
- const rr=ys.flatMap(yy=>DATA.records[yy]||[]);
- const visibleRecords=rr.filter(r=>ys.every(yy=>yy!==CURRENT_ACADEMIC_YEAR)||isVisibleLeadMonth(CURRENT_ACADEMIC_YEAR,r.m));
- const availableMonths=months.filter(m=>ys.every(yy=>yy!==CURRENT_ACADEMIC_YEAR)||isVisibleLeadMonth(CURRENT_ACADEMIC_YEAR,m)&&rr.some(r=>normText(r.m)===normText(m)));
+ const visibleRecords=ys.flatMap(yy=>(DATA.records[yy]||[]).filter(r=>isVisibleLeadMonth(yy,r.m)));
+ const availableMonths=months.filter(m=>ys.some(yy=>{if(yy===CURRENT_ACADEMIC_YEAR)return isVisibleLeadMonth(yy,m);return (DATA.records[yy]||[]).some(r=>normText(r.m)===normText(m));}));
  const states=uniqueClean(visibleRecords.map(r=>r.state)),qualities=uniqueClean(visibleRecords.map(r=>r.sub)),sources=uniqueClean(visibleRecords.map(r=>r.src)),owners=uniqueClean(visibleRecords.map(r=>r.owner));
  fillSelect('month',availableMonths,'All months');fillSelect('state',states);fillSelect('quality',qualities);fillSelect('source',sources);fillSelect('owner',owners);
  ['month','state','quality','source','owner'].forEach(id=>{const opts=[...$(id).options].map(o=>o.value);$(id).value=opts.includes(current[id])?current[id]:'all'});
@@ -1041,54 +1040,155 @@ function parseDateLive(v){
 
 function normHeaderLive(v){return cleanLive(v).replace(/^\uFEFF/,'').toLowerCase().replace(/[^a-z0-9]+/g,'')}
 function findHeaderIndexLive(headers,aliases){const wanted=(aliases||[]).map(normHeaderLive);for(let i=0;i<headers.length;i++)if(wanted.includes(normHeaderLive(headers[i])))return i;return -1}
-let PUBLISHED_GIDS_CACHE=null;
-async function discoverPublishedSheetGids(){
-  if(PUBLISHED_GIDS_CACHE)return PUBLISHED_GIDS_CACHE;
-  const out={};
+
+function parseCsvLive(text){
+  const rows=[];let row=[],cell='',q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(ch==='"'){
+      if(q&&text[i+1]==='"'){cell+='"';i++}else q=!q;
+    }else if(ch===','&&!q){row.push(cell);cell=''}
+    else if((ch==='\n'||ch==='\r')&&!q){
+      if(ch==='\r'&&text[i+1]==='\n')i++;
+      row.push(cell);cell='';
+      if(row.some(v=>cleanLive(v)!==''))rows.push(row);
+      row=[];
+    }else cell+=ch;
+  }
+  row.push(cell);if(row.some(v=>cleanLive(v)!==''))rows.push(row);
+  return rows;
+}
+function normalizeSheetRowsLive(raw, expectedAliases=[]){
+  const rows=Array.isArray(raw)?raw:[];if(!rows.length)return {headers:[],rows:[]};
+  const aliases=(expectedAliases||[]).map(normHeaderLive);let hi=0;
+  if(aliases.length){
+    for(let i=0;i<Math.min(rows.length,20);i++){
+      const r=rows[i]||[];
+      const hit=aliases.filter(a=>r.some(v=>normHeaderLive(v)===a)).length;
+      if(hit>0){hi=i;break}
+    }
+  }
+  const headers=(rows[hi]||[]).map(v=>cleanLive(v));
+  const data=rows.slice(hi+1).map(r=>Array.from({length:headers.length},(_,i)=>r?.[i]??'')).filter(r=>r.some(v=>cleanLive(v)!==''));
+  return {headers,rows:data};
+}
+function liveSheetExpectedAliases(sheetName){
+  if(/^Leads /.test(sheetName))return ['Lead Source','Created On','CreatedOn','Created Date','CreatedDate'];
+  if(sheetName==='Summary')return ['Total Traffic','Organic Search','Direct','AI Assistant'];
+  return [];
+}
+async function discoverPublishedGids(){
+  if(window.__JAIPURIA_PUBLISHED_GIDS__)return window.__JAIPURIA_PUBLISHED_GIDS__;
+  const map={};
   try{
-    const url=`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/pubhtml?_= ${Date.now()}`.replace('?_= ','?_=');
-    const r=await fetch(url,{cache:'no-store',credentials:'omit'});
+    const u=`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/pubhtml?single=true&_=${Date.now()}`;
+    const r=await fetch(u,{cache:'no-store',credentials:'omit'});
     if(r.ok){
       const html=await r.text();
+      // Published Google Sheets expose tab links containing gid=... and the
+      // visible tab name. Capture those first.
+      let m;
+      const aRe=/<a[^>]+href=["'][^"']*?(?:\?|&)gid=(\d+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
+      while((m=aRe.exec(html))){
+        const name=cleanLive(m[2].replace(/<[^>]+>/g,' ').replace(/&amp;/g,'&'));
+        if(name)map[name]=m[1];
+      }
+      // Also support Google-generated JavaScript structures containing
+      // sheetName/name/title and sheetId/gid.
       const patterns=[
-        /(?:sheetName|name|title)["']?\s*[:=]\s*["']([^"']+)["'][\s\S]{0,500}?(?:gid|sheetId)["']?\s*[:=]\s*["']?(\d+)/gi,
-        /(?:gid|sheetId)["']?\s*[:=]\s*["']?(\d+)["']?[\s\S]{0,500}?(?:sheetName|name|title)["']?\s*[:=]\s*["']([^"']+)["']/gi,
-        /[?&]gid=(\d+)[^>]{0,300}>([^<]+)</gi
+        /(?:sheetName|name|title)["']?\s*[:=]\s*["']([^"']+)["'][\s\S]{0,1000}?(?:sheetId|gid)["']?\s*[:=]\s*["']?(\d+)/gi,
+        /(?:sheetId|gid)["']?\s*[:=]\s*["']?(\d+)["']?[\s\S]{0,1000}?(?:sheetName|name|title)["']?\s*[:=]\s*["']([^"']+)["']/gi
       ];
       for(const re of patterns){
-        let m;
         while((m=re.exec(html))){
-          const a=m[1],b=m[2];
-          if(/^\d+$/.test(a)) out[cleanLive(b)]=a; else out[cleanLive(a)]=b;
+          const name=cleanLive((re===patterns[0]?m[1]:m[2]).replace(/<[^>]+>/g,' '));
+          const gid=re===patterns[0]?m[2]:m[1];
+          if(name&&gid)map[name]=gid;
         }
       }
     }
   }catch(e){}
-  PUBLISHED_GIDS_CACHE=out;
-  return out;
+  window.__JAIPURIA_PUBLISHED_GIDS__=map;
+  return map;
 }
+
+function liveSheetExpectedAliases(sheetName){
+  const aliases={
+    'Leads - 2026-27':['Lead Source','Created On','CreatedOn','Created Date','CreatedDate','Transaction Date','TransactionDate'],
+    'Leads 2025-26':['Lead Source','Created On','CreatedOn','Created Date','CreatedDate'],
+    'Leads 2024-25':['Lead Source','Created On','CreatedOn','Created Date','CreatedDate'],
+    'Summary':['Total Traffic','Organic Search','Direct','AI Assistant'],
+    'Jaipuria - All Traffic':['Total','Organic Search','Direct','AI Assistant'],
+    'Jaipuria - Organic Traffic':['Total Visits','Total Users'],
+    'Jaipuria - Direct Traffic':['Total Visits','Total Users']
+  };
+  return aliases[sheetName]||[];
+}
+
+function sourceLooksLikeSheet(sheetName,headers){
+  const wanted=liveSheetExpectedAliases(sheetName).map(normHeaderLive);
+  if(!wanted.length)return true;
+  const got=(headers||[]).map(normHeaderLive);
+  return wanted.some(x=>got.includes(x));
+}
+
 async function fetchSheetRows(sheetName){
-  const q=encodeURIComponent(sheetName), stamp=Date.now(), gids=await discoverPublishedSheetGids();
-  const urls=[];
-  if(gids[sheetName])urls.push(`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${encodeURIComponent(gids[sheetName])}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`);
-  urls.push(
-    `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`,
-    `https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`
-  );
+  const stamp=Date.now(),q=encodeURIComponent(sheetName);
+  const publishedGids=await discoverPublishedGids();
+  const fixedGids={
+    'Leads - 2026-27':'699834517'
+  };
+  const gid=fixedGids[sheetName]||publishedGids[sheetName];
+  const candidates=[];
+  // For the current lead sheet, use the known published gid first.
+  // For other tabs, use the discovered published gid when available.
+  if(gid){
+    candidates.push({name:'published-csv-gid',kind:'csv',
+      url:`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/pub?gid=${gid}&single=true&output=csv&_=${stamp}`});
+    candidates.push({name:'published-gviz-gid',kind:'gviz',
+      url:`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${gid}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+    candidates.push({name:'editable-gviz-gid',kind:'gviz',
+      url:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&gid=${gid}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+  }
+  // Named-sheet endpoints are additional fallbacks.
+  candidates.push({name:'published-gviz-sheet',kind:'gviz',
+    url:`https://docs.google.com/spreadsheets/d/e/${PUBLISHED_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+  candidates.push({name:'editable-gviz-sheet',kind:'gviz',
+    url:`https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:json&headers=1&sheet=${q}&range=A:ZZ&tq=${encodeURIComponent('select *')}&_=${stamp}`});
+
   let last='';
-  for(const url of urls){
+  for(const source of candidates){
     try{
-      const r=await fetch(url,{cache:'no-store',credentials:'omit'});if(!r.ok)throw new Error(`HTTP ${r.status}`);
-      const txt=await r.text();const a=txt.indexOf('{'),b=txt.lastIndexOf('}');if(a<0||b<=a)throw new Error('Google did not return a Visualization response');
-      const j=JSON.parse(txt.slice(a,b+1));if(j.status==='error')throw new Error(j.errors?.map(e=>e.detailed_message||e.message).join('; ')||'Google Visualization error');
-      const cols=j.table?.cols||[], rows=j.table?.rows||[];const headers=cols.map(c=>c.label||c.id||'');
-      const data=rows.map(row=>headers.map((_,i)=>{const c=row.c?.[i];if(!c)return '';return c.f!==undefined&&c.f!==null?c.f:(c.v??'')}));
-      return {headers,rows:data};
+      const r=await fetch(source.url,{cache:'no-store',credentials:'omit',
+        headers:{'Cache-Control':'no-cache','Pragma':'no-cache'}});
+      if(!r.ok)throw new Error(`HTTP ${r.status}`);
+      let normalized;
+      if(source.kind==='csv'){
+        normalized=normalizeSheetRowsLive(parseCsvLive(await r.text()),liveSheetExpectedAliases(sheetName));
+      }else{
+        const txt=await r.text();
+        const a=txt.indexOf('{'),b=txt.lastIndexOf('}');
+        if(a<0||b<=a)throw new Error('Invalid Google Visualization response');
+        const j=JSON.parse(txt.slice(a,b+1));
+        if(j.status==='error')throw new Error(j.errors?.map(e=>e.detailed_message||e.message).join('; ')||'Google Visualization error');
+        const rows=(j.table?.rows||[]).map(row=>(row.c||[]).map(c=>c?((c.f!==undefined&&c.f!==null)?c.f:(c.v??'')):''));
+        const rawHeaders=(j.table?.cols||[]).map(c=>c?.label||c?.id||'');
+        normalized=normalizeSheetRowsLive([rawHeaders,...rows],liveSheetExpectedAliases(sheetName));
+      }
+      const headers=normalized.headers||[],data=normalized.rows||[];
+      if(!headers.length||!data.length)throw new Error(`No usable rows for ${sheetName}`);
+      if(!sourceLooksLikeSheet(sheetName,headers))throw new Error(`Wrong tab/headers returned for ${sheetName}`);
+      return {headers,rows:data,source:source.name,fetchedAt:Date.now()};
     }catch(e){last=e.message||String(e)}
   }
-  throw new Error(`Unable to fetch "${sheetName}" from Google Sheet. ${last}`)
+  throw new Error(`Unable to fetch "${sheetName}" from the live Google Sheet. ${last}`);
 }
-async function fetchLiveBook(){const b={};for(const n of LIVE_SHEETS)b[n]=await fetchSheetRows(n);return b}
+
+async function fetchLiveBook(){
+  const b={};
+  for(const n of LIVE_SHEETS)b[n]=await fetchSheetRows(n);
+  return b;
+}
 function monthYearFromHeader(h){const m=cleanLive(h).match(/^([A-Za-z]{3})'?\s*(\d{2})$/);if(!m)return null;const mon=new Date(`${m[1]} 1, 20${m[2]}`).toLocaleString('en-US',{month:'long'});const yr=2000+Number(m[2]);const ay=['August','September','October','November','December'].includes(mon)?`${yr}-${String(yr+1).slice(-2)}`:`${yr-1}-${String(yr).slice(-2)}`;return {mon,yr,ay}}
 function parseTrafficMonthly(book){const out={"2024-25":{},"2025-26":{},"2026-27":{}};const sh=book['Jaipuria - All Traffic'];if(!sh)return out;const h=sh.headers||[], map={};sh.rows.forEach(r=>map[cleanLive(r[0])]=r);for(let c=1;c<h.length;c++){const p=monthYearFromHeader(h[c]);if(!p||!out[p.ay])continue;out[p.ay][p.mon]={all:numLive(map['Total']?.[c]),organic:numLive(map['Organic Search']?.[c]),direct:numLive(map['Direct']?.[c]),ai:numLive(map['AI Assistant']?.[c])}}return out}
 function parseTrafficMetrics(book){const out={"2024-25":{organic:{},direct:{}},"2025-26":{organic:{},direct:{}},"2026-27":{organic:{},direct:{}}};for(const [sn,ch] of [['Jaipuria - Organic Traffic','organic'],['Jaipuria - Direct Traffic','direct']]){const sh=book[sn];if(!sh)continue;const h=sh.headers||[],map={};sh.rows.forEach(r=>map[cleanLive(r[0])]=r);for(let c=1;c<h.length;c++){const p=monthYearFromHeader(h[c]);if(!p||!out[p.ay])continue;out[p.ay][ch][p.mon]={sessions:numLive(map['Total Visits']?.[c]??map['Total Visits ']?.[c]),users:numLive(map['Total Users']?.[c]),new:numLive(map['New Users']?.[c]),bounce:numLive(map['Bounce Rate (%)']?.[c]),views:numLive(map['Views/Session']?.[c]??map['Views/Session ']?.[c])}}}return out}
@@ -1154,16 +1254,30 @@ function parseAnnualAndProjection(book,monthly){
 function leadMonthFromHeaderLive(v){
   const p=monthYearFromHeader(v);return p?{month:p.mon,year:p.yr,ay:p.ay}:null;
 }
+
+function monthIndex(mn){return months.indexOf(mn)}
+function isCurrentAcademicYear(ay){return ay===CURRENT_ACADEMIC_YEAR}
+function isFutureActualMonth(ay,mn){
+  if(ay!==CURRENT_ACADEMIC_YEAR)return false;
+  const i=months.indexOf(mn);
+  return i<0||i>currentAcademicMonthIndex();
+}
+function actualCutoffDateForAY(ay){
+  if(ay!==CURRENT_ACADEMIC_YEAR)return null;
+  const now=new Date();
+  return new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59,999);
+}
+
 function parseLeadRecords(book){
   const out={};
   const sheets={'2024-25':'Leads 2024-25','2025-26':'Leads 2025-26','2026-27':'Leads - 2026-27'};
   for(const ay of DATA.years){
     const sh=book[sheets[ay]];
-    if(!sh){out[ay]=[];continue}
+    if(!sh)throw new Error(`${sheets[ay]} was not fetched from Google Sheet`);
     const rows=sh.rows||[],h=sh.headers||[];
     const ci={
-      created:findHeaderIndexLive(h,['Created On','CreatedOn','Created Date','CreatedDate','Created At','CreatedAt']),
-      transaction:findHeaderIndexLive(h,['Transaction Date','TransactionDate','Application Date','ApplicationDate']),
+      created:findHeaderIndexLive(h,['Created On','CreatedOn','Created Date','CreatedDate','Created','Created At','CreatedAt']),
+      transaction:findHeaderIndexLive(h,['Transaction Date','TransactionDate']),
       src:findHeaderIndexLive(h,['Lead Source','LeadSource','Source']),
       owner:findHeaderIndexLive(h,['Owner','Owner Name','Lead Owner','LeadOwner']),
       sub:findHeaderIndexLive(h,['LeadSubstage','Lead Substage','Lead Sub Stage','LeadSub Stage']),
@@ -1172,52 +1286,67 @@ function parseLeadRecords(book){
       city:findHeaderIndexLive(h,['Correspondence City','CorrespondenceCity','City']),
       stage:findHeaderIndexLive(h,['Lead Stage','LeadStage','Stage'])
     };
-    if(ci.created<0)throw new Error(`${sheets[ay]}: Created On column not found`);
+    if(ci.created<0)throw new Error(`${sheets[ay]}: "Created On" column not found`);
+    if(ci.transaction<0)throw new Error(`${sheets[ay]}: "Transaction Date" column not found`);
 
-    const leadMonthCols=[];
+    const monthCols=[];
     for(let c=0;c<h.length;c++){
       const p=leadMonthFromHeaderLive(h[c]);
-      if(p&&p.ay===ay)leadMonthCols.push({c,...p});
+      if(p&&p.ay===ay)monthCols.push({c,...p});
     }
+    const cutoff=actualCutoffDateForAY(ay);
+    const currentMonthIdx=currentAcademicMonthIndex();
+    const norm=v=>String(v??'').trim().toLowerCase();
 
     out[ay]=rows.map(r=>{
-      const d=parseDateLive(r[ci.created]);
-      const txd=ci.transaction>=0?parseDateLive(r[ci.transaction]):null;
+      const created=parseDateLive(r[ci.created]);
+      const txd=parseDateLive(r[ci.transaction]);
       const src=cleanLive(r[ci.src]);
-      const nonEmpty=r.filter(v=>cleanLive(v)!=='').length;
-      if(!src&&nonEmpty<2&&!d&&!txd)return null;
-
-      const marked=leadMonthCols.filter(x=>cleanLive(r[x.c])!=='');
-      let inferredDate=d;
-
-      if(marked.length===1){
-        const x=marked[0];
-        const monthNum={August:7,September:8,October:9,November:10,December:11,January:0,February:1,March:2,April:3,May:4,June:5,July:6}[x.month];
-        inferredDate=new Date(x.year,monthNum,15,12,0,0);
-      }else if(!inferredDate&&ay==='2026-27'){
-        const oct=leadMonthCols.find(x=>x.year===2026&&x.month==='October');
-        if(oct&&cleanLive(r[oct.c])!=='')inferredDate=new Date(2026,9,15,12,0,0);
-      }
-
-      if(!inferredDate)return null;
-
       const stageRaw=cleanLive(r[ci.stage]);
       const ownerRaw=cleanLive(r[ci.owner]);
       const stateRaw=cleanLive(r[ci.state]);
       const cityRaw=cleanLive(r[ci.city]);
-      const repeated=v=>!!v&&normText(v)===normText(src);
+      const nonEmpty=r.filter(v=>cleanLive(v)!=='').length;
+      if(!src && !stageRaw && nonEmpty<2)return null;
 
+      // LEADS: strictly by Created On. Marker columns are only a fallback
+      // when Created On is blank/malformed.
+      let leadMonth='';
+      if(created && (!cutoff || created.getTime()<=cutoff.getTime())){
+        leadMonth=created.toLocaleString('en-US',{month:'long'});
+      }else if(!created && monthCols.length){
+        const marked=monthCols.filter(x=>cleanLive(r[x.c])!=='');
+        if(marked.length===1){
+          const mi=monthIndex(marked[0].month);
+          if(mi>=0 && (!isCurrentAcademicYear(ay)||mi<=currentMonthIdx)){
+            leadMonth=marked[0].month;
+          }
+        }
+      }
+
+      // APPLICATIONS: strictly by Transaction Date, independently of Created On.
+      let txMonth='';
+      if(txd){
+        const tm=txd.toLocaleString('en-US',{month:'long'});
+        if(!isFutureActualMonth(ay,tm))txMonth=tm;
+      }
+
+      // Keep a row when either date is usable. A row with only a Transaction
+      // Date can still be a valid application, but it is not counted as a lead.
+      if(!leadMonth && !txMonth)return null;
+
+      const repeated=v=>!!v && norm(v)===norm(src);
       return {
-        m:inferredDate.toLocaleString('en-US',{month:'long'}),
-        t:txd?txd.toLocaleString('en-US',{month:'long'}):'',
-        tx:txd?txd.toISOString():'',
+        m:leadMonth,
+        t:txMonth,
+        tx:txMonth&&txd?(isNaN(txd.getTime())?'':txd.toISOString()):'',
         src:src||'Unknown',
-        owner:repeated(ownerRaw)?'Unknown':(ownerRaw||'Unknown'),
+        owner:(repeated(ownerRaw)?'Unknown':ownerRaw)||'Unknown',
         sub:cleanLive(r[ci.sub])||'Blank',
         counter:cleanLive(r[ci.counter])||'Unassigned',
-        state:repeated(stateRaw)?'Unknown':(stateRaw||'Unknown'),
-        city:repeated(cityRaw)?'Unknown':(cityRaw||'Unknown'),
-        stage:repeated(stageRaw)?'Unknown':(stageRaw||'Unknown')
+        state:(repeated(stateRaw)?'Unknown':stateRaw)||'Unknown',
+        city:(repeated(cityRaw)?'Unknown':cityRaw)||'Unknown',
+        stage:(repeated(stageRaw)?'Unknown':stageRaw)||'Unknown'
       };
     }).filter(Boolean);
   }
@@ -1239,41 +1368,59 @@ function isAchievedLeadMonth(ay,mn){
 function isVisibleLeadMonth(ay,mn){
   return isAchievedLeadMonth(ay,mn);
 }
+
 function renderTargetVsAchievedLive(){
-  const p=DATA.projection||[],ys='2026-27',recs=DATA.records[ys]||[];
+  const p=DATA.projection||[],ys=CURRENT_ACADEMIC_YEAR,recs=DATA.records[ys]||[];
   const rows=p.map(x=>{
-    const achieved=isAchievedLeadMonth(ys,x.m);
-    const leads=achieved?recs.filter(r=>normText(r.m)===normText(x.m)).length:0;
-    const ap=achieved?recs.filter(r=>normText(r.t)===normText(x.m)).length:0;
-    const gp=achieved&&x.leads?((leads-x.leads)/x.leads*100):null;
-    const ga=achieved&&x.applications?((ap-x.applications)/x.applications*100):null;
-    return `<tr><td>${x.m}</td><td>${fmt(x.leads)}</td><td>${fmt(x.applications)}</td><td>${pct(x.leads?x.applications/x.leads*100:0)}</td><td>${achieved?fmt(leads):'—'}</td><td>${achieved?fmt(ap):'—'}</td><td>${achieved?pct(leads?ap/leads*100:0):'—'}</td><td>${signPct(gp)}</td><td>${signPct(ga)}</td></tr>`;
+    const future=isFutureActualMonth(ys,x.m);
+    const leadRows=future?[]:recs.filter(r=>normText(r.m)===normText(x.m));
+    const appRows=future?[]:recs.filter(r=>normText(r.t)===normText(x.m));
+    const leads=leadRows.length,ap=appRows.length;
+    const gp=future?null:(x.leads?((leads-x.leads)/x.leads*100):null);
+    const ga=future?null:(x.applications?((ap-x.applications)/x.applications*100):null);
+    return `<tr><td>${x.m}</td><td>${fmt(x.leads)}</td><td>${fmt(x.applications)}</td><td>${pct(x.leads?x.applications/x.leads*100:0)}</td><td>${future?'—':fmt(leads)}</td><td>${future?'—':fmt(ap)}</td><td>${future?'—':pct(leads?ap/leads*100:0)}</td><td>${future?'—':signPct(gp)}</td><td>${future?'—':signPct(ga)}</td></tr>`;
   }).join('');
-  const totalT=p.reduce((a,b)=>a+b.leads,0),totalA=p.reduce((a,b)=>a+b.applications,0);
-  const achievedMonths=months.filter(m=>isAchievedLeadMonth(ys,m));
-  const actual=recs.filter(r=>achievedMonths.some(m=>normText(m)===normText(r.m)));
-  const actualA=recs.filter(r=>achievedMonths.some(m=>normText(m)===normText(r.t))).length;
-  const targetBody=`${rows}<tr class="leads-total"><td>Total</td><td>${fmt(totalT)}</td><td>${fmt(totalA)}</td><td>${pct(totalT?totalA/totalT*100:0)}</td><td>${fmt(actual.length)}</td><td>${fmt(actualA)}</td><td>${pct(actual.length?actualA/actual.length*100:0)}</td><td>${signPct(totalT?((actual.length-totalT)/totalT*100):null)}</td><td>${signPct(totalA?((actualA-totalA)/totalA*100):null)}</td></tr>`;
+  const visible=p.filter(x=>!isFutureActualMonth(ys,x.m));
+  const targetYtd=visible.reduce((a,b)=>a+Number(b.leads||0),0),appTargetYtd=visible.reduce((a,b)=>a+Number(b.applications||0),0);
+  const totalT=p.reduce((a,b)=>a+Number(b.leads||0),0),totalA=p.reduce((a,b)=>a+Number(b.applications||0),0);
+  const actual=recs.filter(r=>!isFutureActualMonth(ys,r.m));
+  const actualA=recs.filter(r=>r.t&&!isFutureActualMonth(ys,r.t)).length;
+  const targetBody=`${rows}<tr class="leads-total"><td>YTD Total</td><td>${fmt(targetYtd)} <span class="note">/ ${fmt(totalT)} full year</span></td><td>${fmt(appTargetYtd)} <span class="note">/ ${fmt(totalA)} full year</span></td><td>${pct(targetYtd?appTargetYtd/targetYtd*100:0)}</td><td>${fmt(actual.length)}</td><td>${fmt(actualA)}</td><td>${pct(actual.length?actualA/actual.length*100:0)}</td><td>${signPct(targetYtd?((actual.length-targetYtd)/targetYtd*100):null)}</td><td>${signPct(appTargetYtd?((actualA-appTargetYtd)/appTargetYtd*100):null)}</td></tr>`;
   const panel=document.querySelector('#targetVsAchieved tbody');if(panel)panel.innerHTML=targetBody;
-  const t=DATA.projTraffic||{},achMonths=months.filter(m=>isAchievedLeadMonth(ys,m));
-  const orgA=achMonths.reduce((a,m)=>a+trafficVal('organic',ys,m),0),dirA=achMonths.reduce((a,m)=>a+trafficVal('direct',ys,m),0),aiA=achMonths.reduce((a,m)=>a+trafficVal('ai',ys,m),0),combA=orgA+dirA+aiA;
+
+  const t=DATA.projTraffic||{};
+  const achMonths=months.filter(m=>!isFutureActualMonth(ys,m));
+  const orgA=achMonths.reduce((a,m)=>a+trafficVal('organic',ys,m),0);
+  const dirA=achMonths.reduce((a,m)=>a+trafficVal('direct',ys,m),0);
+  const aiA=achMonths.reduce((a,m)=>a+trafficVal('ai',ys,m),0);
+  const combA=orgA+dirA+aiA;
   const tt=document.querySelector('#overallTargetVsAchieved tbody');
   if(tt)tt.innerHTML=`<tr><td>Organic Traffic</td><td>${fmt(t.organic)}</td><td>${fmt(orgA)}</td><td>${signPct(t.organic?((orgA-t.organic)/t.organic*100):null)}</td></tr><tr><td>Direct Traffic</td><td>${fmt(t.direct)}</td><td>${fmt(dirA)}</td><td>${signPct(t.direct?((dirA-t.direct)/t.direct*100):null)}</td></tr><tr><td>AI Assistant</td><td>${t.ai?fmt(t.ai):'—'}</td><td>${fmt(aiA)}</td><td>${t.ai?signPct((aiA-t.ai)/t.ai*100):'—'}</td></tr><tr class="traffic-total"><td>Organic+Direct+AI Assistant</td><td>${fmt(Number(t.combined||0))}</td><td>${fmt(combA)}</td><td>${signPct(Number(t.combined||0)?((combA-Number(t.combined||0))/Number(t.combined||0)*100):null)}</td></tr>`;
-  const overallLeads=actual.length, overallApps=actualA;
-  const leadGrowth=totalT?((overallLeads-totalT)/totalT*100):null, appGrowth=totalA?((overallApps-totalA)/totalA*100):null;
-  if($('overallLeadAchieved'))$('overallLeadAchieved').textContent=fmt(overallLeads);
-  if($('overallLeadGrowth'))$('overallLeadGrowth').textContent=leadGrowth==null?'—':leadGrowth.toFixed(2);
-  if($('overallAppAchieved'))$('overallAppAchieved').textContent=fmt(overallApps);
-  if($('overallAppGrowth'))$('overallAppGrowth').textContent=appGrowth==null?'—':appGrowth.toFixed(2);
+  if($('overallLeadAchieved'))$('overallLeadAchieved').textContent=fmt(actual.length);
+  if($('overallAppAchieved'))$('overallAppAchieved').textContent=fmt(actualA);
 }
 
 async function applyLiveBook(book){
   const monthly=parseTrafficMonthly(book),metricsLive=parseTrafficMetrics(book),records=parseLeadRecords(book),{annual,projection,projTraffic}=parseAnnualAndProjection(book,monthly),geo=parseGeo(book);
-  // For the incomplete/current academic year, the detailed All Traffic sheet is the source of truth. This automatically picks up newly added months such as Oct'26. Historical full-year totals continue to come from Summary.
-  for(const ch of ['all','organic','direct','ai']) annual['2026-27'][ch]=months.reduce((sum,m)=>sum+trafficVal(ch,'2026-27',m),0);
-  const issues=datasetHealth(book,records,monthly,geo);if(issues.length)throw new Error('Google Sheet data validation failed: '+issues.join('; '));
-  DATA.records=records;DATA.traffic=monthly;DATA.metrics=metricsLive;DATA.projection=projection;DATA.projTraffic=projTraffic;TRAFFIC_ANNUAL=annual;GEO_TRAFFIC_CHANNELS=geo;DATA.refreshed=new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});$('refreshStamp').textContent=DATA.refreshed;
-  ['year','month','quality','source','state','owner'].forEach(id=>{if($(id))$(id).value=id==='year'?'2026-27':'all'});updateYearScopedFilters();renderTargetVsAchievedLive();setStatus('✓ Dashboard updated live from Google Sheet.','ok');document.body.classList.remove('live-loading');$('liveOverlay')?.remove();setView('summary')
+  for(const ch of ['all','organic','direct','ai'])annual['2026-27'][ch]=months.filter(m=>!isFutureActualMonth('2026-27',m)).reduce((sum,m)=>sum+trafficVal(ch,'2026-27',m),0);
+
+  const currentLeadRows=records['2026-27']||[];
+  const monthCounts=Object.fromEntries(months.map(m=>[m,currentLeadRows.filter(r=>String(r.m||'').trim()!==''&&normText(r.m)===normText(m)).length]));
+  const expectedActualMonths=months.filter(m=>!isFutureActualMonth('2026-27',m));
+  const missingActual=expectedActualMonths.filter(m=>(monthCounts[m]||0)===0);
+  if(missingActual.length)throw new Error(`Live Leads - 2026-27 data is incomplete. Missing actual month(s): ${missingActual.join(', ')}.`);
+
+  const issues=datasetHealth(book,records,monthly,geo);
+  if(issues.length)throw new Error('Google Sheet data validation failed: '+issues.join('; '));
+
+  DATA.records=records;DATA.traffic=monthly;DATA.metrics=metricsLive;DATA.projection=projection;DATA.projTraffic=projTraffic;TRAFFIC_ANNUAL=annual;GEO_TRAFFIC_CHANNELS=geo;
+  DATA.refreshed=new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});
+  $('refreshStamp').textContent=DATA.refreshed;
+  ['year','month','quality','source','state','owner'].forEach(id=>{if($(id))$(id).value=id==='year'?'2026-27':'all'});
+  updateYearScopedFilters();if($('month'))$('month').value='all';
+  renderTargetVsAchievedLive();
+  setStatus(`✓ Live Google Sheet updated · Leads: ${currentLeadRows.length} · Aug ${monthCounts['August']||0} · Sep ${monthCounts['September']||0} · Oct ${monthCounts['October']||0}`,'ok');
+  document.body.classList.remove('live-loading');$('liveOverlay')?.remove();setView('summary');
 }
 async function loadLiveDashboard(){const btn=$('refreshBtn');if(btn){btn.disabled=true;btn.textContent='↻ Loading…'};try{const book=await fetchLiveBook();await applyLiveBook(book);if(btn){btn.textContent='✓ Data Refreshed';setTimeout(()=>{btn.textContent='↻ Refresh Excel';btn.disabled=false},1600)}}catch(err){console.error('Google Sheet load failed',err);setStatus(`Google Sheet load failed — no stale dashboard data shown. ${err.message}`,'error');document.body.classList.remove('live-loading');$('liveOverlay')?.remove();if(btn){btn.textContent='↻ Retry Google Sheet';btn.disabled=false}}}
 function setStatus(msg,type){let el=$('liveStatus');if(!el){el=document.createElement('div');el.id='liveStatus';el.style.cssText='padding:10px 18px;border-bottom:1px solid #d9cfe0;font:600 13px Segoe UI,Arial';document.querySelector('header')?.after(el)}el.textContent=msg;el.style.background=type==='ok'?'#eaf8ef':'#fff1f1';el.style.color=type==='ok'?'#176b3b':'#a52f36'}
