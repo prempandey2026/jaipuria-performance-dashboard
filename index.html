@@ -1046,7 +1046,7 @@ function resetFiltersForView(v){
 function setView(v){currentView=v;resetFiltersForView(v);document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.dataset.view===v));document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===v));render()}
 
 document.querySelectorAll('#nav button').forEach(b=>b.addEventListener('click',()=>setView(b.dataset.view)));['year','month','quality','source','state','owner'].forEach(id=>$(id).addEventListener('change',()=>{if(id==='year')updateYearScopedFilters();render()}));$('resetBtn').addEventListener('click',()=>{['year','month','quality','source','state','owner'].forEach(id=>$(id).value='all');updateYearScopedFilters();render()});document.querySelectorAll('.traffic-tab').forEach(b=>b.addEventListener('click',()=>{trafficChannel=b.dataset.channel;document.querySelectorAll('.traffic-tab').forEach(x=>x.classList.toggle('active',x===b));renderTraffic()}));
-// LIVE GOOGLE SHEET DATA ONLY — no embedded Excel dataset is used at runtime. Build: LIVE-SHEET-REFRESH-GID699834517-OCT26-LEADS-FIX-CURRENT-MONTH-CUTOFF-2026-10-07
+// LIVE GOOGLE SHEET DATA ONLY — no embedded Excel dataset is used at runtime. Build: LIVE-SHEET-REFRESH-GID699834517-OCT26-LEADS-FIX-CURRENT-MONTH-CUTOFF-DATE-GUARD-2026-10-07
 const GOOGLE_SHEET_ID='1F22D531H6UZL5xcBLANuxQcCcbVNL4-v';
 const PUBLISHED_SHEET_ID='2PACX-1vQhJMiBd6rNnn-E2wygec4EBH3x9zKo_31z4BcO6_nkm_WsnXxMMJg1YVdkI5JsVQ';
 const LIVE_SHEETS=['Summary','Jaipuria - All Traffic','Jaipuria - Organic Traffic','Jaipuria - Direct Traffic','Leads - 2026-27','Leads 2025-26','Leads 2024-25','Organic Traffic by States','Organic Traffic by Cities','Direct Traffic by States','Direct Traffic by Cities'];
@@ -1224,7 +1224,7 @@ function parseLeadRecords(book){
       return {
         m:inferredDate.toLocaleString('en-US',{month:'long'}),
         t:txIsFuture?'':txMonth,
-        tx:txIsFuture?'':txd.toISOString(),
+        tx:txd?(txIsFuture?'':txd.toISOString()):'',
         src:src||'Unknown',owner:owner||'Unknown',sub:cleanLive(r[ci.sub])||'Blank',
         counter:cleanLive(r[ci.counter])||'Unassigned',state:state||'Unknown',city:city||'Unknown',stage:stage||'Unknown'
       };
